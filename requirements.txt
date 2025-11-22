@@ -1,4 +1,5 @@
-# requirements.txt
 fastapi
 uvicorn
 pydantic
+python-multipart
+google-generativeai
