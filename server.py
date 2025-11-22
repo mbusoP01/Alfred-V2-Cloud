@@ -1,6 +1,7 @@
 # server.py
 import os
 import google.generativeai as genai
+from google.generativeai import types # <--- CRITICAL IMPORT
 from datetime import datetime
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -42,15 +43,14 @@ if api_key:
         
         if best_model:
             # --- THE FIX IS HERE ---
-            # Old way: 'google_search_retrieval' (Deprecated)
-            # New way: A list containing a dictionary for 'google_search'
-            tools_list = [
-                { "google_search": {} }
-            ]
+            # We use the official 'types' wrapper to avoid the FunctionDeclaration error
+            google_search_tool = types.Tool(
+                google_search=types.GoogleSearch()
+            )
             
             model = genai.GenerativeModel(
                 model_name=best_model,
-                tools=tools_list,
+                tools=[google_search_tool], # <--- Passed as a proper Tool object
                 system_instruction=ALFRED_SYSTEM_INSTRUCTIONS
             )
         else:
@@ -99,11 +99,9 @@ def process_command(request: UserRequest):
         final_prompt = f"Current System Time: {now}. User Query: {text}"
         
         # Ask the AI
-        # auto-function-calling means it decides when to search automatically
         response = model.generate_content(final_prompt)
         reply = response.text
     except Exception as e:
-        # If he still fails, we catch it gracefully
         reply = f"I encountered a processing error, Sir. Details: {str(e)}"
 
     return {"response": reply}
