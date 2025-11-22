@@ -26,7 +26,6 @@ api_key = os.environ.get("GEMINI_API_KEY")
 client = None
 
 if api_key:
-    # The new SDK client
     client = genai.Client(api_key=api_key)
 
 app = FastAPI()
@@ -46,7 +45,7 @@ class UserRequest(BaseModel):
 
 @app.get("/")
 def home():
-    status = "Online (New SDK)" if client else "Offline (No Key)"
+    status = "Online (Gemini 2.0)" if client else "Offline (No Key)"
     return {"status": status, "server_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 
 @app.post("/command")
@@ -61,10 +60,10 @@ def process_command(request: UserRequest):
         now = datetime.now().strftime("%A, %B %d, %Y at %H:%M")
         final_prompt = f"Current System Time: {now}. User Query: {text}"
         
-        # --- THE NEW SEARCH TOOL CONFIGURATION ---
-        # This is the exact syntax for the new google-genai SDK
+        # --- THE FIX: GEMINI 2.0 ONLY ---
+        # We removed the fallback to 1.5 because it causes the 404 error.
         response = client.models.generate_content(
-            model='gemini-2.0-flash-exp', # Trying the latest, falling back to 1.5 if needed
+            model='gemini-2.0-flash', 
             contents=final_prompt,
             config=types.GenerateContentConfig(
                 tools=[types.Tool(google_search=types.GoogleSearch())],
@@ -74,18 +73,6 @@ def process_command(request: UserRequest):
         
         reply = response.text
     except Exception as e:
-        # Fallback to stable 1.5 if 2.0 fails
-        try:
-            response = client.models.generate_content(
-                model='gemini-1.5-flash',
-                contents=final_prompt,
-                config=types.GenerateContentConfig(
-                    tools=[types.Tool(google_search=types.GoogleSearch())],
-                    system_instruction=ALFRED_SYSTEM_INSTRUCTIONS
-                )
-            )
-            reply = response.text
-        except Exception as e2:
-            reply = f"I tried to search but encountered a critical error: {str(e2)}"
+        reply = f"I encountered a critical error, Sir: {str(e)}"
 
     return {"response": reply}
