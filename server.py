@@ -5,17 +5,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-# --- SETUP AI BRAIN ---
-# This pulls the key you just saved in Render
+# --- CONFIGURATION ---
 api_key = os.environ.get("GEMINI_API_KEY")
-
 if api_key:
     genai.configure(api_key=api_key)
-    # We use 'gemini-1.5-flash' because it is fast and smart
-    model = genai.GenerativeModel('gemini-1.5-flash')
-else:
-    model = None
-# ----------------------
 
 app = FastAPI()
 
@@ -34,21 +27,37 @@ class UserRequest(BaseModel):
 
 @app.get("/")
 def home():
-    return {"status": "Alfred v2 (AI Powered) is online."}
+    # DIAGNOSTIC: This will list available models on the home page
+    try:
+        available = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        return {"status": "Alfred Online", "available_models": available}
+    except:
+        return {"status": "Alfred Online", "available_models": "Could not fetch list"}
 
 @app.post("/command")
 def process_command(request: UserRequest):
     text = request.command.strip()
     
-    # Safety Check
-    if not model:
-        return {"response": "Sir, my API key is missing. Please check Render settings."}
+    if not api_key:
+        return {"response": "Error: API Key is missing in Render settings."}
 
+    # --- SMART MODEL SWITCHER ---
+    # We try the fast model first. If it fails (404), we switch to the stable backup.
     try:
-        # Ask the AI
-        ai_response = model.generate_content(text)
-        reply = ai_response.text
+        # Attempt 1: Try specific Flash version
+        model = genai.GenerativeModel('gemini-1.5-flash-001')
+        response = model.generate_content(text)
+        reply = response.text
+        
     except Exception as e:
-        reply = f"I encountered an error, Sir: {str(e)}"
+        try:
+            print(f"Flash failed: {e}. Switching to backup...")
+            # Attempt 2: Backup Model (Gemini Pro 1.0 - Very Stable)
+            model = genai.GenerativeModel('gemini-pro')
+            response = model.generate_content(text)
+            reply = response.text
+        except Exception as e2:
+            # If both fail, show the error
+            reply = f"I am having trouble accessing my brain circuits. Error: {str(e2)}"
 
     return {"response": reply}
