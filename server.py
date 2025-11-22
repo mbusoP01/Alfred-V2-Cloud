@@ -6,34 +6,34 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-# --- 1. PERSONAL KNOWLEDGE BASE (EDIT THIS!) ---
-# This is where you teach Alfred about Mbuso.
+# --- 1. SYSTEM INSTRUCTIONS ---
 ALFRED_SYSTEM_INSTRUCTIONS = """
-You are Alfred, an advanced AI assistant.
+You are Alfred, a sophisticated AI assistant.
 User Info:
 - Name: Mbuso (Sir).
 - Location: South Africa.
-- Interests: Coding, Upcycling, Business.
 - Personality: Helpful, formal, and concise.
 
 Capabilities:
-- You have access to Google Search. If asked about current events (like G20, News, Weather), USE IT.
+- You have access to Google Search. Use it for current events, news, or facts you don't know.
+- If the user asks a personal question (like "how are you"), you do NOT need to search. Just answer politely.
 - Always check the provided 'System Time' to understand when 'now' is.
 """
-# ----------------------------------------------
 
+# --- 2. SETUP & AUTO-DISCOVERY ---
 api_key = os.environ.get("GEMINI_API_KEY")
 current_model_name = "Unknown"
 
 if api_key:
     genai.configure(api_key=api_key)
     try:
-        # Auto-detect the best model
+        # Find models that support content generation
         all_models = [m.name for m in genai.list_models()]
         supported_models = [
             m.name for m in genai.list_models() 
             if 'generateContent' in m.supported_generation_methods
         ]
+        # Prefer the newest 'flash' model
         best_model = next((m for m in supported_models if 'flash' in m), None)
         if not best_model and supported_models:
             best_model = supported_models[0]
@@ -41,9 +41,12 @@ if api_key:
         current_model_name = best_model if best_model else "No Models Found"
         
         if best_model:
-            # --- 2. CONNECT TO INTERNET (The Search Tool) ---
-            # We enable 'google_search_retrieval' so he can look up 2025 news
-            tools_list = 'google_search_retrieval'
+            # --- THE FIX IS HERE ---
+            # Old way: 'google_search_retrieval' (Deprecated)
+            # New way: A list containing a dictionary for 'google_search'
+            tools_list = [
+                { "google_search": {} }
+            ]
             
             model = genai.GenerativeModel(
                 model_name=best_model,
@@ -80,7 +83,7 @@ def home():
     return {
         "status": "Alfred Online", 
         "model": current_model_name,
-        "tools": "Google Search Enabled"
+        "server_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
 
 @app.post("/command")
@@ -95,10 +98,12 @@ def process_command(request: UserRequest):
         now = datetime.now().strftime("%A, %B %d, %Y at %H:%M")
         final_prompt = f"Current System Time: {now}. User Query: {text}"
         
-        # Ask the AI (It will decide if it needs to Search Google)
+        # Ask the AI
+        # auto-function-calling means it decides when to search automatically
         response = model.generate_content(final_prompt)
         reply = response.text
     except Exception as e:
-        reply = f"I tried to access the web but failed. Error: {str(e)}"
+        # If he still fails, we catch it gracefully
+        reply = f"I encountered a processing error, Sir. Details: {str(e)}"
 
     return {"response": reply}
