@@ -1,64 +1,54 @@
 # server.py
+import os
+import google.generativeai as genai
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from datetime import datetime
-import random
+
+# --- SETUP AI BRAIN ---
+# This pulls the key you just saved in Render
+api_key = os.environ.get("GEMINI_API_KEY")
+
+if api_key:
+    genai.configure(api_key=api_key)
+    # We use 'gemini-1.5-flash' because it is fast and smart
+    model = genai.GenerativeModel('gemini-1.5-flash')
+else:
+    model = None
+# ----------------------
 
 app = FastAPI()
 
-# --- CONFIGURATION: ALLOW CONNECTION FROM ANYWHERE (CORS) ---
-# This is the "Security Gate" that was missing!
-origins = ["*"]
-
+# --- SECURITY GATE ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=False,  # <--- I set this to False for you to fix the security bug
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-# ------------------------------------------------------------
+# ---------------------
 
 class UserRequest(BaseModel):
     command: str
 
 @app.get("/")
 def home():
-    # If you see this message, you know you have the NEW code
-    return {"status": "Alfred v2 Brain is operational."}
+    return {"status": "Alfred v2 (AI Powered) is online."}
 
 @app.post("/command")
 def process_command(request: UserRequest):
-    text = request.command.lower().strip()
-    response_text = ""
-
-    # --- ALFRED LOGIC BLOCK ---
+    text = request.command.strip()
     
-    # 1. GREETINGS
-    if any(word in text for word in ["hello", "hi", "hey"]):
-        greetings = ["At your service, sir.", "Systems online.", "Hello, sir."]
-        response_text = random.choice(greetings)
+    # Safety Check
+    if not model:
+        return {"response": "Sir, my API key is missing. Please check Render settings."}
 
-    # 2. TIME & DATE
-    elif "time" in text:
-        now = datetime.now().strftime("%H:%M")
-        response_text = f"The current time is {now}."
-    elif "date" in text:
-        today = datetime.now().strftime("%A, %B %d, %Y")
-        response_text = f"Today is {today}."
+    try:
+        # Ask the AI
+        ai_response = model.generate_content(text)
+        reply = ai_response.text
+    except Exception as e:
+        reply = f"I encountered an error, Sir: {str(e)}"
 
-    # 3. CALCULATOR
-    elif "calculate" in text or "calc" in text:
-        try:
-            expression = text.replace("calculate", "").replace("calc", "")
-            result = eval(expression) 
-            response_text = f"The result is {result}."
-        except:
-            response_text = "I could not calculate that, sir."
-
-    # 4. FALLBACK
-    else:
-        response_text = "I do not recognize that command yet, sir."
-
-    return {"response": response_text}
+    return {"response": reply}
