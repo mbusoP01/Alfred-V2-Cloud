@@ -1,5 +1,6 @@
 # server.py
 import os
+import base64
 from google import genai
 from google.genai import types
 from datetime import datetime
@@ -16,12 +17,12 @@ User Info:
 - Personality: Helpful, formal, and concise.
 
 Capabilities:
-- You have access to Google Search. Use it for current events, news, or facts you don't know.
-- If asked about current events (like "Who won the rugby world cup 2023"), SEARCH.
+- You can SEE images. If the user sends an image, analyze it.
+- You have access to Google Search. Use it for current events.
 - Always check the provided 'System Time'.
 """
 
-# --- 2. SETUP NEW CLIENT ---
+# --- 2. SETUP CLIENT ---
 api_key = os.environ.get("GEMINI_API_KEY")
 client = None
 
@@ -38,33 +39,48 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-# ---------------------
 
+# --- 3. DATA MODELS ---
 class UserRequest(BaseModel):
     command: str
+    image: str | None = None  # New field for the image code
 
 @app.get("/")
 def home():
-    status = "Online (Gemini 2.0)" if client else "Offline (No Key)"
-    return {"status": status, "server_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+    status = "Online (Gemini 2.0 + Vision)" if client else "Offline (No Key)"
+    return {"status": status}
 
 @app.post("/command")
 def process_command(request: UserRequest):
     text = request.command.strip()
     
     if not client:
-        return {"response": "Sir, my neural pathways are disconnected (API Key missing)."}
+        return {"response": "Sir, my neural pathways are disconnected."}
 
     try:
-        # Time Injection
         now = datetime.now().strftime("%A, %B %d, %Y at %H:%M")
-        final_prompt = f"Current System Time: {now}. User Query: {text}"
+        prompt_text = f"Current System Time: {now}. User Query: {text}"
         
-        # --- THE FIX: GEMINI 2.0 ONLY ---
-        # We removed the fallback to 1.5 because it causes the 404 error.
+        # --- PREPARE CONTENTS ---
+        contents = [prompt_text]
+
+        # If there is an image, add it to the package
+        if request.image:
+            try:
+                image_bytes = base64.b64decode(request.image)
+                # Create a special Image Part for Gemini
+                image_part = types.Part.from_bytes(
+                    data=image_bytes,
+                    mime_type="image/jpeg" 
+                )
+                contents.append(image_part)
+            except Exception as e:
+                return {"response": f"Error processing image visual: {str(e)}"}
+
+        # --- SEND TO GEMINI 2.0 ---
         response = client.models.generate_content(
             model='gemini-2.0-flash', 
-            contents=final_prompt,
+            contents=contents,
             config=types.GenerateContentConfig(
                 tools=[types.Tool(google_search=types.GoogleSearch())],
                 system_instruction=ALFRED_SYSTEM_INSTRUCTIONS
