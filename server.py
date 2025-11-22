@@ -1,19 +1,32 @@
 # server.py
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from datetime import datetime
 import random
 
 app = FastAPI()
 
-# This defines the data format we expect from the website
+# --- CONFIGURATION: ALLOW CONNECTION FROM ANYWHERE (CORS) ---
+# This is the "Security Gate" that was missing!
+origins = ["*"]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=False,  # <--- I set this to False for you to fix the security bug
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+# ------------------------------------------------------------
+
 class UserRequest(BaseModel):
     command: str
 
 @app.get("/")
 def home():
-    # This URL is used by Render to check if the server is alive
-    return {"status": "Alfred v2 is online"}
+    # If you see this message, you know you have the NEW code
+    return {"status": "Alfred v2 Brain is operational."}
 
 @app.post("/command")
 def process_command(request: UserRequest):
@@ -35,11 +48,9 @@ def process_command(request: UserRequest):
         today = datetime.now().strftime("%A, %B %d, %Y")
         response_text = f"Today is {today}."
 
-    # 3. CALCULATOR (Basic)
+    # 3. CALCULATOR
     elif "calculate" in text or "calc" in text:
-        # Example input: "calculate 5 + 5"
         try:
-            # simplistic parser: removes word 'calculate' and evaluates the rest
             expression = text.replace("calculate", "").replace("calc", "")
             result = eval(expression) 
             response_text = f"The result is {result}."
@@ -49,7 +60,5 @@ def process_command(request: UserRequest):
     # 4. FALLBACK
     else:
         response_text = "I do not recognize that command yet, sir."
-
-    # --------------------------
 
     return {"response": response_text}
