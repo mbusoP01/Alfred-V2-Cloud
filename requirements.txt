@@ -8,3 +8,5 @@ fpdf
 python-docx
 python-pptx
 pytz
+matplotlib
+numpy
