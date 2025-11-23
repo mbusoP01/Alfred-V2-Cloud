@@ -23,7 +23,11 @@ import logging
 import yfinance as yf
 import feedparser
 from textblob import TextBlob
-from PIL import Image # Pillow for Image Optimization
+from PIL import Image 
+
+# --- DATABASE LIBRARY ---
+import firebase_admin
+from firebase_admin import credentials, firestore
 
 # --- LOGGING ---
 logging.basicConfig(level=logging.WARNING)
@@ -41,6 +45,14 @@ SERVER_SECRET_KEY = "Mbuso.08@"
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY")
 BRIAN_VOICE_ID = "nPczCjzI2devNBz1zQrb"
 HUGGINGFACE_API_KEY = os.environ.get("HUGGINGFACE_API_KEY")
+
+# --- FIREBASE INIT (PLACEHOLDER) ---
+# logic to check for service account and init app would go here
+# e.g. 
+# if not firebase_admin._apps:
+#     cred = credentials.Certificate("serviceAccountKey.json") 
+#     firebase_admin.initialize_app(cred)
+#     db = firestore.client()
 
 # --- SYSTEM INSTRUCTIONS ---
 ALFRED_SYSTEM_INSTRUCTIONS = """
@@ -240,8 +252,8 @@ def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(
         system_context = []
         
         # Scrapers
-        if "http" in request.command: # Basic URL check to save processing
-            # (Researcher engine omitted for brevity, assume it's standard)
+        if "http" in request.command: 
+            # (Researcher engine would go here)
             pass 
             
         stk = get_stock_data(request.command)
