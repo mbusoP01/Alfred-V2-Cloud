@@ -10,7 +10,8 @@
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
-    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+    
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22 fill=%22white%22>⚚</text></svg>">
 
@@ -43,7 +44,7 @@
             position: fixed; top: 0; left: 0; right: 0; z-index: 100;
         }
         .header-title { font-weight: 700; font-size: 16px; letter-spacing: 1px; }
-        .icon-btn { background: none; border: none; color: var(--accent); font-size: 24px; cursor: pointer; padding: 5px; display: flex; align-items: center; }
+        .icon-btn { background: none; border: none; color: var(--accent); font-size: 20px; cursor: pointer; padding: 5px; display: flex; align-items: center; }
 
         /* CHAT AREA */
         #chat-wrapper { 
@@ -75,13 +76,15 @@
         .action-main-btn {
             background: var(--accent); border: none; border-radius: 50%; width: 40px; height: 40px;
             color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer;
-            flex-shrink: 0;
+            flex-shrink: 0; transition: 0.2s;
         }
-        .action-main-btn .material-icons { font-size: 20px; }
+        .action-main-btn i { font-size: 18px; } /* FontAwesome Size */
+        
         .mic-active { background-color: #ff3b30; animation: pulse 1.5s infinite; }
         @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.6; } 100% { opacity: 1; } }
         
-        .img-preview { max-width: 150px; border-radius: 10px; margin-top: 5px; border: 1px solid var(--border); }
+        .file-preview { max-width: 150px; padding: 10px; background: rgba(255,255,255,0.1); border-radius: 10px; margin-top: 5px; border: 1px solid var(--border); display: flex; align-items: center; gap: 10px; font-size: 12px; }
+        .img-preview { max-width: 100%; border-radius: 5px; }
         audio { width: 100%; margin-top: 8px; height: 32px; }
         
         /* SIDEBAR */
@@ -100,7 +103,7 @@
         .theme-btn {
             padding: 15px; margin: 20px; text-align: center; background: var(--alfred-msg); 
             border-radius: 10px; cursor: pointer; font-weight: bold; color: var(--accent);
-            border: 1px solid var(--border); display: flex; align-items: center; justify-content: center;
+            border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; gap: 10px;
         }
         .overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 250; display: none; }
         .overlay.show { display: block; }
@@ -150,20 +153,20 @@
     </div>
 
     <div class="header">
-        <button class="icon-btn" onclick="toggleSidebar()"><span class="material-icons">menu</span></button>
+        <button class="icon-btn" onclick="toggleSidebar()"><i class="fa-solid fa-bars"></i></button>
         <div class="header-title">⚚ ALFRED_ΣYSTEM ⚚</div>
-        <button class="icon-btn" onclick="startNewChat()"><span class="material-icons">add</span></button>
+        <button class="icon-btn" onclick="startNewChat()"><i class="fa-solid fa-plus"></i></button>
     </div>
 
     <div class="overlay" id="overlay" onclick="closeAllMenus()"></div>
     <div class="sidebar" id="sidebar">
         <div class="sidebar-header">
             <span>Memory Banks</span>
-            <span onclick="toggleSidebar()" style="cursor:pointer;"><span class="material-icons">close</span></span>
+            <span onclick="toggleSidebar()" style="cursor:pointer;"><i class="fa-solid fa-times"></i></span>
         </div>
         <div class="history-list" id="historyList"></div>
         <div class="theme-btn" onclick="toggleThemes()">
-            <span class="material-icons" style="margin-right: 8px;">palette</span> Change Theme
+            <i class="fa-solid fa-palette"></i> Change Theme
         </div>
     </div>
 
@@ -180,12 +183,15 @@
     <div id="chat-wrapper"></div>
 
     <div class="input-area">
-        <button class="icon-btn" onclick="document.getElementById('fileInput').click()"><span class="material-icons">add_photo_alternate</span></button>
-        <input type="file" id="fileInput" accept="image/*" onchange="handleImage(this)">
+        <button class="icon-btn" onclick="document.getElementById('fileInput').click()"><i class="fa-solid fa-paperclip"></i></button>
+        <input type="file" id="fileInput" accept="image/*, application/pdf, text/plain" onchange="handleFile(this)">
+        
         <button class="voice-toggle" id="voiceBtn" onclick="toggleVoiceMode()">၊၊||၊</button>
+        
         <input type="text" id="userInput" placeholder="Command..." autocomplete="off" oninput="updateButtonState()">
+        
         <button class="action-main-btn" id="actionBtn" onclick="handleAction()">
-            <span class="material-icons">keyboard</span>
+            <i class="fa-solid fa-microphone"></i>
         </button>
     </div>
 
@@ -196,7 +202,8 @@
         
         let chats = JSON.parse(localStorage.getItem('alfred_chats') || "[]");
         let currentChatId = null;
-        let currentImage = null;
+        let currentFileData = null;
+        let currentMimeType = null;
         let isVoiceOn = false;
         
         function checkAuth() {
@@ -269,26 +276,26 @@
             document.getElementById('overlay').classList.remove('show');
         }
 
-        // --- UPDATED BUTTON STATE LOGIC FOR ICONS ---
+        // --- BUTTON LOGIC FOR FONTAWESOME ---
         function updateButtonState() {
             const text = document.getElementById('userInput').value.trim();
             const btn = document.getElementById('actionBtn');
-            if (text.length > 0 || currentImage) {
-                btn.innerHTML = '<span class="material-icons">send</span>';
+            if (text.length > 0 || currentFileData) {
+                // Show Send Icon (Paper Plane)
+                btn.innerHTML = '<i class="fa-solid fa-paper-plane"></i>';
             } else {
-                btn.innerHTML = '<span class="material-icons">keyboard</span>';
+                // Show Mic Icon (Microphone)
+                btn.innerHTML = '<i class="fa-solid fa-microphone"></i>';
             }
         }
         function handleAction() {
             const text = document.getElementById('userInput').value.trim();
-            if (text.length > 0 || currentImage) sendMessage();
+            if (text.length > 0 || currentFileData) sendMessage();
             else startDictation();
         }
         function startDictation() {
             if (recognition) {
                 document.getElementById('actionBtn').classList.add('mic-active');
-                // Show Mic Icon while listening
-                document.getElementById('actionBtn').innerHTML = '<span class="material-icons">mic</span>';
                 recognition.start();
             } else {
                 alert("Mic not supported.");
@@ -365,12 +372,34 @@
                 saveChats();
             }
         }
+
+        function handleFile(input) {
+            const file = input.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                currentFileData = e.target.result.split(',')[1];
+                currentMimeType = file.type;
+                
+                let previewHtml = "";
+                if (file.type.startsWith('image/')) {
+                    previewHtml = `<div class="file-preview"><img src="${e.target.result}" class="img-preview"></div>`;
+                } else {
+                    previewHtml = `<div class="file-preview"><i class="fa-solid fa-file"></i> ${file.name}</div>`;
+                }
+                
+                addMessage(previewHtml, 'user', false);
+                updateButtonState();
+            };
+            reader.readAsDataURL(file);
+        }
+
         async function sendMessage() {
             const input = document.getElementById('userInput');
             const text = input.value.trim();
-            if (!text && !currentImage) return;
+            if (!text && !currentFileData) return;
 
-            addMessage(text, 'user');
+            if(text) addMessage(text, 'user');
             input.value = '';
             updateButtonState();
             input.focus(); 
@@ -388,7 +417,7 @@
                 const res = await fetch(API_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ command: text, image: currentImage, speak: isVoiceOn, history: historyContext })
+                    body: JSON.stringify({ command: text, file_data: currentFileData, mime_type: currentMimeType, speak: isVoiceOn, history: historyContext })
                 });
                 const data = await res.json();
                 document.getElementById('loading').remove();
@@ -399,7 +428,8 @@
                 if(document.getElementById('loading')) document.getElementById('loading').remove();
                 addMessage("Connection Error.", 'alfred', false);
             }
-            currentImage = null;
+            currentFileData = null;
+            currentMimeType = null;
             updateButtonState();
         }
         
@@ -414,17 +444,6 @@
                 div.onclick = () => loadChat(chat.id);
                 list.appendChild(div);
             });
-        }
-        function handleImage(input) {
-            const file = input.files[0];
-            if (!file) return;
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                currentImage = e.target.result.split(',')[1];
-                addMessage(`<img src="${e.target.result}" class="img-preview">`, 'user');
-                updateButtonState();
-            };
-            reader.readAsDataURL(file);
         }
 
         document.getElementById('userInput').addEventListener('keypress', (e) => {
