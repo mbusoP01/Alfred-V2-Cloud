@@ -7,3 +7,4 @@ requests
 fpdf
 python-docx
 python-pptx
+pytz
