@@ -18,15 +18,13 @@ from fpdf import FPDF
 from docx import Document
 from pptx import Presentation
 
-# --- SECURITY & KEYS ---
+# --- KEYS ---
 SERVER_SECRET_KEY = "Mbuso.08@"
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY")
 BRIAN_VOICE_ID = "nPczCjzI2devNBz1zQrb"
 HUGGINGFACE_API_KEY = os.environ.get("HUGGINGFACE_API_KEY")
 
 # --- MODEL CONFIGURATION ---
-# We use FLUX.1-dev (The current King of Open Source)
-# Fallback: stable-diffusion-xl-base-1.0 if Flux is busy
 HF_IMAGE_URL = "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-dev"
 
 ALFRED_SYSTEM_INSTRUCTIONS = """
@@ -37,8 +35,8 @@ PROTOCOL:
 1. Answer the CURRENT query directly.
 2. IF A FILE IS UPLOADED: Analyze it thoroughly.
 3. IMAGE GEN: If asked to generate/create an image:
-   - Reply exactly: "IMAGE_GEN_REQUEST: [Detailed Prompt based on user request]"
-   - Do not generate a link. The server will handle the heavy rendering.
+   - Reply exactly: "IMAGE_GEN_REQUEST: [Detailed Prompt]"
+   - Do not generate a link.
 """
 
 api_key = os.environ.get("GEMINI_API_KEY")
@@ -67,30 +65,30 @@ class UserRequest(BaseModel):
     speak: bool = False
     history: List[ChatMessage] = []
 
-# --- IMAGE GENERATION ENGINE (FLUX) ---
+# --- ROBUST IMAGE GEN ---
 def generate_high_quality_image(prompt):
-    if not HUGGINGFACE_API_KEY:
-        return None, None
-    
+    if not HUGGINGFACE_API_KEY: return None, None
     headers = {"Authorization": f"Bearer {HUGGINGFACE_API_KEY}"}
     payload = {"inputs": prompt}
     
     try:
         response = requests.post(HF_IMAGE_URL, headers=headers, json=payload)
         
-        # If model is loading, wait a bit and try again (Common with Free Tier)
-        if "error" in response.json() and "loading" in response.json()["error"]:
-            time.sleep(5) # Wait for model to load
+        # Retry if loading
+        if response.status_code == 503:
+            time.sleep(5)
             response = requests.post(HF_IMAGE_URL, headers=headers, json=payload)
 
-        if response.status_code == 200:
-            # Return the raw image bytes
+        # CRITICAL FIX: Check if response is actually an image
+        if response.status_code == 200 and "image" in response.headers.get("content-type", ""):
             image_b64 = base64.b64encode(response.content).decode('utf-8')
             filename = f"flux_gen_{datetime.now().strftime('%H%M%S')}.jpg"
             return image_b64, filename
+        else:
+            print(f"Flux Error: {response.text}")
+            
     except Exception as e:
-        print(f"Image Gen Error: {e}")
-        pass
+        print(f"Image Gen Exception: {e}")
     return None, None
 
 # --- FILE FACTORY ---
@@ -112,6 +110,7 @@ def create_file(content, file_type):
     elif file_type == "pptx":
         prs = Presentation()
         slide = prs.slides.add_slide(prs.slide_layouts[1])
+        slide.shapes.title.text = "Alfred Presentation"
         slide.placeholders[1].text = content
         prs.save(buffer)
         return base64.b64encode(buffer.getvalue()).decode('utf-8'), f"{filename}.pptx"
@@ -119,12 +118,12 @@ def create_file(content, file_type):
         return base64.b64encode(content.encode('utf-8')).decode('utf-8'), f"{filename}.txt"
     return None, None
 
-# --- VOICE HELPER ---
+# --- VOICE ---
 def generate_voice(text):
     if not ELEVENLABS_API_KEY: return None
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{BRIAN_VOICE_ID}"
     headers = {"Accept": "audio/mpeg", "Content-Type": "application/json", "xi-api-key": ELEVENLABS_API_KEY}
-    clean_text = re.sub(r'IMAGE_GEN_REQUEST:.*', 'Generating image now, Sir.', text)
+    clean_text = re.sub(r'IMAGE_GEN_REQUEST:.*', 'Generating image now.', text)
     clean_text = clean_text.replace("*", "").replace("#", "").replace("`", "")
     if not clean_text.strip(): return None
     try:
@@ -135,7 +134,7 @@ def generate_voice(text):
 
 @app.get("/")
 def home():
-    return {"status": "Alfred Online (Flux Vision)"}
+    return {"status": "Alfred Online (Fixed)"}
 
 @app.post("/command")
 def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(None)):
@@ -180,19 +179,17 @@ def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(
         gen_file_data = None
         gen_filename = None
 
-        # --- HANDLE FILE GEN ---
         if "FILE_CONTENT_START" in reply and requested_type:
             content = reply.split("FILE_CONTENT_START")[1].split("FILE_CONTENT_END")[0].strip()
             reply = "I have generated the document for you, Sir."
             gen_file_data, gen_filename = create_file(content, requested_type)
 
-        # --- HANDLE IMAGE GEN (FLUX) ---
         elif "IMAGE_GEN_REQUEST:" in reply:
             image_prompt = reply.split("IMAGE_GEN_REQUEST:")[1].strip()
-            reply = "I am rendering the image using the Flux engine, Sir. This may take a moment."
+            reply = "I am rendering the image, Sir."
             gen_file_data, gen_filename = generate_high_quality_image(image_prompt)
             if not gen_file_data:
-                reply = "I attempted to generate the image, but the Flux engine is currently overloaded. Please try again in 30 seconds."
+                reply = "The Flux engine is currently warming up or busy. Please try again in 10 seconds."
 
         audio_data = generate_voice(reply) if request.speak else None
 
