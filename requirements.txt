@@ -12,3 +12,6 @@ beautifulsoup4
 youtube-transcript-api
 numpy
 matplotlib
+yfinance
+feedparser
+textblob
