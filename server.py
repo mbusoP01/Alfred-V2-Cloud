@@ -18,10 +18,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
 
-# --- FILE LIBRARIES ---
+# --- LIBRARIES ---
 from fpdf import FPDF
 from docx import Document
 from pptx import Presentation
+from bs4 import BeautifulSoup
+from youtube_transcript_api import YouTubeTranscriptApi
 
 # --- KEYS ---
 SERVER_SECRET_KEY = "Mbuso.08@"
@@ -35,18 +37,17 @@ User: Mbuso (Sir). Location: South Africa.
 
 PROTOCOL:
 1. Answer the CURRENT query directly.
-2. IF A VIDEO/IMAGE IS UPLOADED: Analyze it thoroughly. For video, describe the action, sound (if applicable), and key events.
+2. IF A LINK IS PROVIDED: The server has read it for you. Summarize or analyze the 'Link Content' provided in the prompt.
 3. IF A FILE IS UPLOADED: Analyze it thoroughly.
 
-*** CRITICAL: DATA VISUALIZATION ***
-If user asks to "plot", "graph", or "chart" data:
-1. Extract data and write Python code using 'matplotlib'.
-2. WRAP CODE IN: <<<CHART_START>>> code <<<CHART_END>>>.
-3. Save plot to 'chart.png'.
+*** CRITICAL: FILE GENERATION ***
+If user asks to create/generate a file:
+1. Do NOT chat.
+2. Wrap content in: <<<FILE_START>>> content <<<FILE_END>>>.
 
-*** CRITICAL: FILE/IMAGE GEN ***
-- Files: Wrap content in <<<FILE_START>>> ... <<<FILE_END>>>.
-- Images: Reply "IMAGE_GEN_REQUEST: [Prompt]"
+*** CRITICAL: IMAGE GENERATION ***
+If asked to generate an image:
+1. Reply exactly: "IMAGE_GEN_REQUEST: [Detailed Prompt]"
 """
 
 api_key = os.environ.get("GEMINI_API_KEY")
@@ -76,18 +77,40 @@ class UserRequest(BaseModel):
     thinking_mode: bool = False
     history: List[ChatMessage] = []
 
-# --- CHART ENGINE ---
-def execute_chart_code(code):
+# --- RESEARCHER ENGINE (WEB SCRAPER) ---
+def get_url_content(text):
+    # Find first URL in text
+    url_match = re.search(r'(https?://[^\s]+)', text)
+    if not url_match: return None
+    url = url_match.group(0)
+    
+    print(f"Scraping URL: {url}")
+    
     try:
-        local_env = {"plt": plt, "np": np}
-        exec(code, {}, local_env)
-        buf = io.BytesIO()
-        plt.savefig(buf, format='png', bbox_inches='tight')
-        plt.close()
-        buf.seek(0)
-        return base64.b64encode(buf.getvalue()).decode('utf-8'), "alfred_chart.png"
+        # 1. YouTube Logic
+        if "youtube.com" in url or "youtu.be" in url:
+            video_id = None
+            if "v=" in url: video_id = url.split("v=")[1].split("&")[0]
+            elif "youtu.be" in url: video_id = url.split("/")[-1]
+            
+            if video_id:
+                transcript = YouTubeTranscriptApi.get_transcript(video_id)
+                full_text = " ".join([t['text'] for t in transcript])
+                return f"[YOUTUBE TRANSCRIPT]: {full_text[:10000]}" # Limit to 10k chars
+        
+        # 2. General Website Logic
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+        response = requests.get(url, headers=headers, timeout=10)
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        # Kill script and style elements
+        for script in soup(["script", "style"]): script.extract()
+        
+        text_content = soup.get_text(separator=' ', strip=True)
+        return f"[WEBSITE CONTENT]: {text_content[:10000]}" # Limit to 10k chars
+
     except Exception as e:
-        return None, None
+        return f"[ERROR READING LINK]: {str(e)}"
 
 # --- IMAGE GEN ---
 def generate_high_quality_image(prompt):
@@ -115,7 +138,8 @@ def generate_high_quality_image(prompt):
 # --- FILE FACTORY ---
 def create_file(content, file_type):
     buffer = io.BytesIO()
-    filename = f"alfred_doc_{datetime.now().strftime('%H%M%S')}"
+    timestamp = datetime.now().strftime('%H%M%S')
+    filename = f"alfred_doc_{timestamp}"
     try:
         if file_type == "pdf":
             pdf = FPDF()
@@ -126,6 +150,7 @@ def create_file(content, file_type):
             return base64.b64encode(pdf.output(dest='S').encode('latin-1')).decode('utf-8'), f"{filename}.pdf"
         elif file_type == "docx":
             doc = Document()
+            doc.add_heading('Alfred Generation', 0)
             doc.add_paragraph(content)
             doc.save(buffer)
             return base64.b64encode(buffer.getvalue()).decode('utf-8'), f"{filename}.docx"
@@ -141,13 +166,26 @@ def create_file(content, file_type):
     except: pass
     return None, None
 
+# --- CHART ENGINE ---
+def execute_chart_code(code):
+    try:
+        local_env = {"plt": plt, "np": np}
+        exec(code, {}, local_env)
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', bbox_inches='tight')
+        plt.close()
+        buf.seek(0)
+        return base64.b64encode(buf.getvalue()).decode('utf-8'), "alfred_chart.png"
+    except Exception as e:
+        return None, None
+
 # --- VOICE ---
 def generate_voice(text):
     if not ELEVENLABS_API_KEY: return None
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{BRIAN_VOICE_ID}"
     headers = {"Accept": "audio/mpeg", "Content-Type": "application/json", "xi-api-key": ELEVENLABS_API_KEY}
-    clean_text = re.sub(r'IMAGE_GEN_REQUEST:.*', 'Generating visual.', text)
-    clean_text = re.sub(r'<<<.*?>>>', 'Visual data generated.', clean_text, flags=re.DOTALL)
+    clean_text = re.sub(r'IMAGE_GEN_REQUEST:.*', 'Generating image.', text)
+    clean_text = re.sub(r'<<<.*?>>>', 'Content generated.', clean_text, flags=re.DOTALL)
     clean_text = clean_text.replace("*", "").replace("#", "").replace("`", "")
     if not clean_text.strip(): return None
     try:
@@ -158,7 +196,7 @@ def generate_voice(text):
 
 @app.get("/")
 def home():
-    return {"status": "Alfred Online (Video Analysis Enabled)"}
+    return {"status": "Alfred Online (Researcher Mode)"}
 
 @app.post("/command")
 def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(None)):
@@ -185,13 +223,17 @@ def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(
             role = "model" if msg.role == "alfred" else "user"
             chat_history.append(types.Content(role=role, parts=[types.Part.from_text(text=msg.content)]))
 
-        current_parts = [f"[Current SAST Time: {now}] {request.command}"]
-        
-        # --- FILE / VIDEO / IMAGE HANDLING ---
+        # --- SCRAPE LINK IF PRESENT ---
+        scraped_content = get_url_content(request.command)
+        if scraped_content:
+            prompt_text = f"[System: User provided a link. Here is the content: {scraped_content}]\n\nUser Query: {request.command}"
+        else:
+            prompt_text = f"[Current SAST Time: {now}] {request.command}"
+
+        current_parts = [prompt_text]
         if request.file_data:
             try:
                 file_bytes = base64.b64decode(request.file_data)
-                # Simply pass the mime type provided by the frontend (e.g. video/mp4)
                 current_parts.append(types.Part.from_bytes(data=file_bytes, mime_type=request.mime_type))
             except: pass
 
