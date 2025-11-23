@@ -4,7 +4,7 @@ pydantic
 python-multipart
 google-genai
 requests
-fpdf
+fpdf2
 python-docx
 python-pptx
 pytz
