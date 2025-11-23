@@ -17,7 +17,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # --- LIGHTWEIGHT LIBRARIES ---
-# We rely on Google's Cloud SDK. No heavy local ML or Pandas/Numpy needed.
+# Removed: yfinance, textblob, feedparser, numpy, matplotlib (Causes of crash)
 from google import genai
 from google.genai import types
 
@@ -42,10 +42,10 @@ User: Mbuso (Sir). Location: South Africa.
 *** PRIMARY PROTOCOL ***
 1. Answer the CURRENT query directly and concisely.
 2. **REAL-TIME DATA:** You have access to Google Search. ALWAYS use the Google Search tool to fetch real-time data for:
-   - Stocks / Finance
+   - Stocks / Finance (e.g., "Price of AAPL")
    - News / Current Events
    - Weather
-   - Social Sentiment (search for recent discussions)
+   - Social Sentiment
    DO NOT hallucinate data. Search for it.
 
 *** IMAGE PROTOCOL ***
@@ -74,6 +74,8 @@ class UserRequest(BaseModel):
     command: str
     file_data: Optional[str] = None
     mime_type: Optional[str] = None
+    speak: bool = False
+    thinking_mode: bool = False
     history: List[ChatMessage] = []
 
 # --- HELPER FUNCTIONS ---
@@ -124,12 +126,12 @@ def create_file(content, file_type):
         return None, None
     return None, None
 
-# --- ROUTES ---
-
+# --- HEALTH CHECK ---
 @app.get("/")
 def health_check():
     return {"status": "alive", "mode": "lightweight"}
 
+# --- MAIN ENDPOINT ---
 @app.post("/command")
 async def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(None)):
     if x_alfred_auth != SERVER_SECRET_KEY:
@@ -140,18 +142,15 @@ async def process_command(request: UserRequest, x_alfred_auth: Optional[str] = H
 
     try:
         # 1. Prepare History
-        # Convert Pydantic models to Gemini types
         chat_history = []
         for m in request.history:
             role = "user" if m.role == "user" else "model"
             chat_history.append(types.Content(role=role, parts=[types.Part.from_text(text=m.content)]))
 
-        # 2. Configure the Model (Gemini 2.0 Flash with Search Tool)
-        # We enable Google Search so you don't need 'yfinance' or 'feedparser'
+        # 2. Configure Model with Google Search Tool (Replaces yfinance/feedparser)
         model_id = 'gemini-2.0-flash-thinking-exp-01-21'
         
-        # 3. Generate Response
-        # We use a loop to handle potential 429 rate limits gracefully
+        # 3. Generate Response with Retry Logic
         response_text = "I am having trouble connecting to my brain."
         
         for attempt in range(3):
@@ -165,11 +164,12 @@ async def process_command(request: UserRequest, x_alfred_auth: Optional[str] = H
                     )
                 )
                 
+                # We simply send the command. The model decides if it needs to Search Google.
                 result = chat.send_message(request.command)
                 response_text = result.text
                 break
             except Exception as e:
-                if "429" in str(e):
+                if "429" in str(e): # Rate Limit
                     time.sleep(2)
                     continue
                 logger.error(f"Gemini API Error: {e}")
@@ -214,8 +214,3 @@ async def process_command(request: UserRequest, x_alfred_auth: Optional[str] = H
     except Exception as e:
         logger.error(f"Critical Server Error: {e}")
         return {"response": f"Critical Server Error: {str(e)}"}
-
-if __name__ == '__main__':
-    import uvicorn
-    port = int(os.environ.get('PORT', 10000))
-    uvicorn.run(app, host='0.0.0.0', port=port)
