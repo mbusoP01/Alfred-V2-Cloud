@@ -15,5 +15,3 @@ matplotlib
 yfinance
 feedparser
 textblob
-Pillow
-firebase-admin
