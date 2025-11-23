@@ -23,7 +23,7 @@ SERVER_SECRET_KEY = "Mbuso.08@"
 api_key = os.environ.get("GEMINI_API_KEY")
 
 if not api_key:
-    logger.warning("GEMINI_API_KEY is missing!")
+    logger.warning("GEMINI_API_KEY is missing! The server will not function correctly.")
 else:
     genai.configure(api_key=api_key)
 
@@ -122,13 +122,14 @@ async def process_command(request: UserRequest, x_alfred_auth: Optional[str] = H
         raise HTTPException(status_code=401, detail="Unauthorized")
     
     try:
-        # 1. Prepare History (Stable SDK format)
+        # 1. Prepare History
         history_gemini = []
         for m in request.history:
             role = "user" if m.role == "user" else "model"
             history_gemini.append({"role": role, "parts": [m.content]})
 
         # 2. Configure Model (Gemini 1.5 Flash - STABLE)
+        # We enable the built-in Google Search tool
         tools = [
             {"google_search": {}} 
         ]
