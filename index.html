@@ -11,34 +11,71 @@
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22 fill=%22white%22>⚚</text></svg>">
 
     <style>
-        :root { --bg: #000000; --sidebar: #111111; --header: rgba(28,28,30,0.95); --user-msg: #0A84FF; --alfred-msg: #262629; --text: #FFFFFF; --accent: #0A84FF; --border: #333; }
+        /* --- THEME VARIABLES --- */
+        :root {
+            --bg: #000000; --sidebar: #111111; --header: rgba(28,28,30,0.95);
+            --user-msg: #0A84FF; --alfred-msg: #262629; --text: #FFFFFF;
+            --accent: #0A84FF; --border: #333;
+        }
         [data-theme="matrix"] { --bg:#0d1117; --sidebar:#010409; --header:rgba(13,17,23,0.95); --user-msg:#238636; --alfred-msg:#161b22; --text:#c9d1d9; --accent:#2ea043; --border:#30363d; }
         [data-theme="cloud"] { --bg:#F2F2F7; --sidebar:#FFFFFF; --header:rgba(255,255,255,0.95); --user-msg:#007AFF; --alfred-msg:#E5E5EA; --text:#000000; --accent:#007AFF; --border:#C6C6C8; }
         [data-theme="obsidian"] { --bg:#1c1c1e; --sidebar:#2c2c2e; --header:rgba(44,44,46,0.95); --user-msg:#5E5CE6; --alfred-msg:#3a3a3c; --text:#ffffff; --accent:#5E5CE6; --border:#48484a; }
         [data-theme="ocean"] { --bg:#0f172a; --sidebar:#1e293b; --header:rgba(15,23,42,0.95); --user-msg:#0ea5e9; --alfred-msg:#334155; --text:#f8fafc; --accent:#38bdf8; --border:#475569; }
 
-        * { box-sizing: border-box; }
-        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background-color: var(--bg); color: var(--text); margin: 0; height: 100dvh; overflow: hidden; display: flex; flex-direction: column; }
-        
-        .header { display: flex; align-items: center; justify-content: space-between; padding: 15px 20px; background: var(--header); backdrop-filter: blur(20px); border-bottom: 1px solid var(--border); position: fixed; top: 0; left: 0; right: 0; z-index: 100; }
-        .header-title { font-weight: 700; font-size: 16px; letter-spacing: 1px; }
-        .icon-btn { background: none; border: none; color: var(--accent); font-size: 20px; cursor: pointer; padding: 5px; }
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+            background-color: var(--bg); color: var(--text);
+            margin: 0; height: 100dvh; overflow: hidden; display: flex; flex-direction: column;
+            transition: background 0.3s, color 0.3s;
+        }
 
-        #chat-wrapper { flex: 1; overflow-y: auto; padding: 80px 15px 100px 15px; display: flex; flex-direction: column; gap: 15px; scroll-behavior: smooth; }
+        /* HEADER */
+        .header {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 15px 20px; background: var(--header);
+            backdrop-filter: blur(20px); border-bottom: 1px solid var(--border);
+            position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+        }
+        .header-title { font-weight: 700; font-size: 16px; letter-spacing: 1px; }
+        .icon-btn { background: none; border: none; color: var(--accent); font-size: 20px; cursor: pointer; padding: 5px; display: flex; align-items: center; }
+
+        /* CHAT AREA */
+        #chat-wrapper { 
+            flex: 1; overflow-y: auto; padding: 80px 15px 100px 15px; 
+            display: flex; flex-direction: column; gap: 15px; scroll-behavior: smooth;
+        }
         .message { max-width: 88%; padding: 12px 16px; border-radius: 18px; font-size: 15px; line-height: 1.5; word-wrap: break-word; }
         .user { align-self: flex-end; background-color: var(--user-msg); color: #fff; border-bottom-right-radius: 4px; }
         .alfred { align-self: flex-start; background-color: var(--alfred-msg); color: var(--text); border-bottom-left-radius: 4px; }
         
-        /* FIXED IMAGE DISPLAY STYLE */
+        /* RESPONSIVE IMAGES FIX */
         .message img { max-width: 100%; height: auto; border-radius: 10px; margin: 10px 0; display: block; }
         
         .message pre { background: rgba(0,0,0,0.3); padding: 35px 10px 10px 10px; border-radius: 8px; overflow-x: auto; margin: 10px 0; border: 1px solid var(--border); position: relative; }
         .message code { font-family: 'Menlo', monospace; font-size: 13px; }
         .copy-btn { position: absolute; top: 5px; right: 5px; background: rgba(255,255,255,0.1); border: 1px solid var(--border); color: var(--text); padding: 4px 8px; border-radius: 4px; font-size: 12px; cursor: pointer; transition: 0.2s; }
-        
-        .input-area { position: fixed; bottom: 0; left: 0; right: 0; padding: 10px 15px; padding-bottom: max(10px, env(safe-area-inset-bottom)); background: var(--header); backdrop-filter: blur(20px); display: flex; align-items: center; gap: 10px; border-top: 1px solid var(--border); z-index: 200; }
-        input[type="text"] { flex: 1; min-width: 0; background: var(--alfred-msg); border: none; border-radius: 20px; padding: 12px 15px; color: var(--text); font-size: 16px; outline: none; }
-        .action-main-btn { background: var(--accent); border: none; border-radius: 50%; width: 40px; height: 40px; color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; }
+        .copy-btn:hover { background: var(--accent); color: white; }
+
+        /* INPUT AREA */
+        .input-area {
+            position: fixed; bottom: 0; left: 0; right: 0; width: 100%; padding: 10px 15px;
+            padding-bottom: max(10px, env(safe-area-inset-bottom));
+            background: var(--header); backdrop-filter: blur(20px);
+            display: flex; align-items: center; gap: 10px; 
+            border-top: 1px solid var(--border); z-index: 200;
+        }
+        input[type="text"] {
+            flex: 1; min-width: 0; background: var(--alfred-msg); border: none; border-radius: 20px;
+            padding: 12px 15px; color: var(--text); font-size: 16px; outline: none;
+        }
+        .action-main-btn {
+            background: var(--accent); border: none; border-radius: 50%; width: 40px; height: 40px;
+            color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer;
+            flex-shrink: 0; transition: 0.2s;
+        }
+        .action-main-btn:active { transform: scale(0.9); }
+        .action-main-btn i { font-size: 18px; }
         .mic-active { background-color: #ff3b30; animation: pulse 1.5s infinite; }
         @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.6; } 100% { opacity: 1; } }
         
@@ -46,6 +83,7 @@
         .img-preview { max-width: 100%; border-radius: 5px; }
         audio { width: 100%; margin-top: 8px; height: 32px; }
         
+        /* SIDEBAR */
         .sidebar { position: fixed; top: 0; left: 0; width: 280px; height: 100%; background: var(--sidebar); z-index: 300; transform: translateX(-100%); transition: 0.3s ease; border-right: 1px solid var(--border); display: flex; flex-direction: column; }
         .sidebar.open { transform: translateX(0); }
         .sidebar-header { padding: 20px; font-size: 18px; font-weight: bold; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
@@ -56,11 +94,13 @@
         .overlay.show { display: block; }
         #fileInput { display: none; }
         
+        /* LOGIN SCREEN */
         #loginScreen { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: var(--bg); z-index: 9999; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--text); }
         .login-form { display: flex; flex-direction: column; gap: 15px; width: 280px; }
         .login-input { padding: 15px; border-radius: 10px; border: 1px solid var(--border); background: var(--alfred-msg); color: var(--text); font-size: 16px; text-align: center; outline: none; width: 100%; }
         .login-btn { padding: 12px; background: var(--accent); color: white; border: none; border-radius: 25px; font-size: 16px; cursor: pointer; width: 100%; }
         
+        /* THEME MODAL */
         #themeModal { position: fixed; bottom: 0; left: 0; width: 100%; background: var(--header); border-top-left-radius: 20px; border-top-right-radius: 20px; z-index: 400; transform: translateY(100%); transition: 0.3s; padding: 20px; border-top: 1px solid var(--border); }
         #themeModal.open { transform: translateY(0); }
         .theme-option { padding: 15px; border-bottom: 1px solid var(--border); cursor: pointer; text-align: center; }
@@ -123,15 +163,26 @@
         const API_URL = "https://alfred-v2-cloud.onrender.com/command";
         const MY_USERNAME = "Mbuso_Admin";
         const MY_PASSWORD = "Mbuso.08@";
+        
         let chats = JSON.parse(localStorage.getItem('alfred_chats') || "[]");
-        let currentChatId = null, currentFileData = null, currentMimeType = null, isVoiceOn = false;
-
-        function checkAuth() { if (sessionStorage.getItem('alfred_auth') === 'true') document.getElementById('loginScreen').style.display = 'none'; }
+        let currentChatId = null;
+        let currentFileData = null;
+        let currentMimeType = null;
+        let isVoiceOn = false;
+        
+        function checkAuth() {
+            if (sessionStorage.getItem('alfred_auth') === 'true') document.getElementById('loginScreen').style.display = 'none';
+        }
         function checkLogin() {
-            if (document.getElementById('usernameInput').value === MY_USERNAME && document.getElementById('passwordInput').value === MY_PASSWORD) {
-                sessionStorage.setItem('alfred_auth', 'true'); sessionStorage.setItem('alfred_key', MY_PASSWORD);
+            const user = document.getElementById('usernameInput').value;
+            const pass = document.getElementById('passwordInput').value;
+            if (user === MY_USERNAME && pass === MY_PASSWORD) {
+                sessionStorage.setItem('alfred_auth', 'true');
+                sessionStorage.setItem('alfred_key', pass);
                 document.getElementById('loginScreen').style.display = 'none';
-            } else { alert("Access Denied."); }
+            } else {
+                alert("Access Denied.");
+            }
         }
         checkAuth(); 
 
@@ -155,11 +206,15 @@
         function toggleSidebar() { document.getElementById('sidebar').classList.toggle('open'); document.getElementById('overlay').classList.toggle('show'); }
         function toggleThemes() { document.getElementById('themeModal').classList.toggle('open'); if(document.getElementById('sidebar').classList.contains('open')) toggleSidebar(); }
         function closeAllMenus() { document.getElementById('sidebar').classList.remove('open'); document.getElementById('themeModal').classList.remove('open'); document.getElementById('overlay').classList.remove('show'); }
-        
+
         function updateButtonState() {
             const text = document.getElementById('userInput').value.trim();
             const btn = document.getElementById('actionBtn');
-            btn.innerHTML = (text.length > 0 || currentFileData) ? '<i class="fa-solid fa-paper-plane"></i>' : '<i class="fa-solid fa-microphone"></i>';
+            if (text.length > 0 || currentFileData) {
+                btn.innerHTML = '<i class="fa-solid fa-paper-plane"></i>';
+            } else {
+                btn.innerHTML = '<i class="fa-solid fa-microphone"></i>';
+            }
         }
         function handleAction() {
             const text = document.getElementById('userInput').value.trim();
@@ -178,7 +233,7 @@
             else chat.messages.forEach(m => addMessage(m.text, m.sender, false, m.audio, m.file));
             closeAllMenus();
         }
-
+        
         window.copyCode = function(btn) {
             const code = btn.parentElement.querySelector('code').innerText;
             navigator.clipboard.writeText(code).then(() => { const originalText = btn.innerText; btn.innerText = "Copied!"; setTimeout(() => btn.innerText = originalText, 2000); });
@@ -203,17 +258,14 @@
 
             if (fileData) {
                 if (fileData.name.match(/\.(jpg|jpeg|png|gif)$/i)) {
-                    // IMAGE
                     const img = document.createElement('img'); img.src = "data:image/jpeg;base64," + fileData.data; img.className = 'img-preview'; div.appendChild(img);
-                    const dlLink = document.createElement('a'); dlLink.href = img.src; dlLink.download = fileData.name; dlLink.style.display='block'; dlLink.style.color='#aaa'; dlLink.innerText='Download'; div.appendChild(dlLink);
+                    const dlLink = document.createElement('a'); dlLink.href = img.src; dlLink.download = fileData.name; dlLink.style.display='block'; dlLink.style.color='#aaa'; dlLink.style.fontSize='12px'; dlLink.innerText='Download High-Res'; div.appendChild(dlLink);
                 } else {
-                    // FILE
                     const fileLink = document.createElement('a'); fileLink.href = "data:application/octet-stream;base64," + fileData.data; fileLink.download = fileData.name; fileLink.className = 'file-card';
                     fileLink.innerHTML = `<i class="fa-solid fa-file-arrow-down file-icon"></i> <div>${fileData.name}</div>`; div.appendChild(fileLink);
                 }
             }
             if (audioData) { const audio = document.createElement('audio'); audio.controls = true; audio.src = "data:audio/mp3;base64," + audioData; div.appendChild(audio); }
-            
             wrapper.appendChild(div); wrapper.scrollTop = wrapper.scrollHeight;
             if (save && currentChatId) {
                 const chat = chats.find(c => c.id === currentChatId); chat.messages.push({ text, sender, audio: audioData, file: fileData });
