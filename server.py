@@ -5,7 +5,6 @@ import requests
 import re
 import io
 import time
-import pytz # <--- NEW: Timezone support
 from google import genai
 from google.genai import types
 from datetime import datetime
@@ -25,28 +24,26 @@ ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY")
 BRIAN_VOICE_ID = "nPczCjzI2devNBz1zQrb"
 HUGGINGFACE_API_KEY = os.environ.get("HUGGINGFACE_API_KEY")
 
-# --- SYSTEM INSTRUCTIONS (PERSONALITY UPDATE) ---
+# --- CONFIG ---
+HF_IMAGE_URL = "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-dev"
+
+# --- SYSTEM INSTRUCTIONS ---
 ALFRED_SYSTEM_INSTRUCTIONS = """
 You are Alfred, an elite intelligent assistant.
-User: Mbuso (Sir). 
-User Location: South Africa.
+User: Mbuso (Sir). Location: South Africa.
 
 PROTOCOL:
-1. TIME AWARENESS: 
-   - You have access to the exact 'Current SAST Time'. USE IT.
-   - If it is early (5AM-11AM): Say "Good morning".
-   - If it is late (10PM-4AM): Occasionally remark "It is getting late, Sir" or "Burning the midnight oil?".
-   - If asked "What time is it?", provide the SAST time provided in the prompt.
+1. Answer the CURRENT query directly.
+2. IF A FILE IS UPLOADED: Analyze it thoroughly.
 
-2. WEATHER AWARENESS:
-   - You have the 'google_search' tool. 
-   - If the user asks about weather, or if the context implies going outside, USE THE SEARCH TOOL to check the weather in South Africa (or the specific location mentioned).
-   - Do not guess the weather. Search for it.
+*** CRITICAL: FILE GENERATION ***
+If user asks to create/generate a file:
+1. Do NOT chat.
+2. Wrap content in: <<<FILE_START>>> content <<<FILE_END>>>.
 
-3. GENERAL:
-   - Answer the CURRENT query directly.
-   - Be proactive. Suggest things. Don't just wait for orders.
-   - If asked to generate/create an image: Reply exactly: "IMAGE_GEN_REQUEST: [Detailed Prompt]"
+*** CRITICAL: IMAGE GENERATION ***
+If asked to generate an image:
+1. Reply exactly: "IMAGE_GEN_REQUEST: [Detailed Prompt]"
 """
 
 api_key = os.environ.get("GEMINI_API_KEY")
@@ -73,21 +70,19 @@ class UserRequest(BaseModel):
     file_data: Optional[str] = None
     mime_type: Optional[str] = None
     speak: bool = False
+    thinking_mode: bool = False  # <--- NEW TOGGLE
     history: List[ChatMessage] = []
 
-# --- ROBUST IMAGE GEN ---
+# --- IMAGE GEN ---
 def generate_high_quality_image(prompt):
     if not HUGGINGFACE_API_KEY: return None, None
     headers = {"Authorization": f"Bearer {HUGGINGFACE_API_KEY}"}
     payload = {"inputs": prompt}
-    
-    # Auto-Fallback List
     models = [
         "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-dev",
         "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-3.5-large",
         "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0"
     ]
-
     for model_url in models:
         try:
             response = requests.post(model_url, headers=headers, json=payload)
@@ -136,7 +131,7 @@ def generate_voice(text):
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{BRIAN_VOICE_ID}"
     headers = {"Accept": "audio/mpeg", "Content-Type": "application/json", "xi-api-key": ELEVENLABS_API_KEY}
     clean_text = re.sub(r'IMAGE_GEN_REQUEST:.*', 'Generating image.', text)
-    clean_text = re.sub(r'<<<FILE_START>>>.*?<<<FILE_END>>>', 'I have generated the file for you, Sir.', clean_text, flags=re.DOTALL)
+    clean_text = re.sub(r'<<<FILE_START>>>.*?<<<FILE_END>>>', 'File generated.', clean_text, flags=re.DOTALL)
     clean_text = clean_text.replace("*", "").replace("#", "").replace("`", "")
     if not clean_text.strip(): return None
     try:
@@ -147,9 +142,7 @@ def generate_voice(text):
 
 @app.get("/")
 def home():
-    # Timezone Debug Check
-    sa_time = datetime.now(pytz.timezone('Africa/Johannesburg')).strftime("%H:%M")
-    return {"status": "Alfred Online", "server_time_sa": sa_time}
+    return {"status": "Alfred Online (Thinking Mode Enabled)"}
 
 @app.post("/command")
 def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(None)):
@@ -159,26 +152,27 @@ def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(
     if not client: return {"response": "Sir, connection severed (No API Key)."}
 
     try:
-        # --- 1. GET PRECISE SAST TIME ---
-        sa_timezone = pytz.timezone('Africa/Johannesburg')
-        now = datetime.now(sa_timezone).strftime("%A, %B %d, %Y at %I:%M %p (SAST)")
+        now = datetime.now().strftime("%A, %B %d, %Y at %H:%M")
         
-        # --- 2. HISTORY & PROMPT ---
+        # --- MODEL SELECTOR ---
+        # Regular Mode = gemini-2.0-flash (Fast)
+        # Thinking Mode = gemini-2.0-flash-thinking-exp (Smart/Reasoning)
+        selected_model = 'gemini-2.0-flash-thinking-exp-01-21' if request.thinking_mode else 'gemini-2.0-flash'
+
         chat_history = []
         for msg in request.history:
             role = "model" if msg.role == "alfred" else "user"
             chat_history.append(types.Content(role=role, parts=[types.Part.from_text(text=msg.content)]))
 
-        current_parts = [f"[Current SAST Time: {now}] {request.command}"]
+        current_parts = [f"[System Time: {now}] {request.command}"]
         if request.file_data:
             try:
                 file_bytes = base64.b64decode(request.file_data)
                 current_parts.append(types.Part.from_bytes(data=file_bytes, mime_type=request.mime_type))
             except: pass
 
-        # --- 3. GENERATE ---
         chat_session = client.chats.create(
-            model='gemini-2.0-flash',
+            model=selected_model,
             history=chat_history,
             config=types.GenerateContentConfig(
                 tools=[types.Tool(google_search=types.GoogleSearch())],
@@ -202,12 +196,10 @@ def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(
             try:
                 content = reply.split("FILE_CONTENT_START")[1].split("FILE_CONTENT_END")[0].strip()
                 reply = "I have generated the document for you, Sir."
-                # Detect type from user command or default to txt
                 req_type = "txt"
                 if "pdf" in request.command.lower(): req_type = "pdf"
                 elif "word" in request.command.lower(): req_type = "docx"
                 elif "presentation" in request.command.lower(): req_type = "pptx"
-                
                 gen_file_data, gen_filename = create_file(content, req_type)
             except: pass
 
