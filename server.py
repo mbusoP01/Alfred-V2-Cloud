@@ -2,6 +2,7 @@
 import os
 import base64
 import requests
+import re  # <--- NEW: To clean URLs from voice
 from google import genai
 from google.genai import types
 from datetime import datetime
@@ -20,11 +21,17 @@ You are Alfred, an elite intelligent assistant.
 User: Mbuso (Sir). Location: South Africa.
 
 PROTOCOL:
-1. FOCUS: Answer the CURRENT query directly. Do NOT summarize past messages unless asked.
-2. BREVITY: Be concise. Avoid fluff. Get straight to the point.
-3. FORMAT: Use Markdown. Use code blocks for code.
-4. MEMORY: Use conversation history only for context (e.g., if user says "change it", know what "it" is).
-5. TOOLS: Use Google Search for current events (e.g., 2024/2025 news).
+1. FOCUS: Answer the CURRENT query directly.
+2. MEMORY: Use conversation history for context.
+3. TOOLS: Use Google Search for current events.
+
+CAPABILITY - IMAGE GENERATION:
+If the user asks to "generate", "draw", "create", or "make" an image:
+1. You MUST NOT use Google Search.
+2. You MUST output a Markdown Image Link.
+3. Format: ![Description](https://image.pollinations.ai/prompt/{description_with_underscores}?nologo=true)
+4. Example: ![A red car](https://image.pollinations.ai/prompt/A_red_car_in_space?nologo=true)
+5. Do not explain the link. Just show it.
 """
 
 # --- 3. SETUP CLIENT ---
@@ -43,16 +50,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- UPDATED DATA MODEL ---
 class ChatMessage(BaseModel):
-    role: str  # "user" or "model"
+    role: str
     content: str
 
 class UserRequest(BaseModel):
     command: str
     image: Optional[str] = None
     speak: bool = False
-    history: List[ChatMessage] = [] # Alfred now accepts history!
+    history: List[ChatMessage] = []
 
 # --- HELPER: TEXT-TO-SPEECH ---
 def generate_voice(text):
@@ -60,10 +66,17 @@ def generate_voice(text):
     
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{BRIAN_VOICE_ID}"
     headers = {"Accept": "audio/mpeg", "Content-Type": "application/json", "xi-api-key": ELEVENLABS_API_KEY}
-    # We strip markdown symbols for cleaner speech
-    clean_text = text.replace("*", "").replace("#", "").replace("`", "")
+    
+    # --- CLEAN TEXT FOR VOICE ---
+    # 1. Remove Markdown Images ![...](...) so he doesn't read the URL
+    clean_text = re.sub(r'!\[.*?\]\(.*?\)', '', text)
+    # 2. Remove bold/italic symbols
+    clean_text = clean_text.replace("*", "").replace("#", "").replace("`", "")
+    
+    if not clean_text.strip(): return None # Don't speak if only an image was sent
+
     data = {
-        "text": clean_text[:1000], # Limit voice char count to save credits
+        "text": clean_text[:1000],
         "model_id": "eleven_monolingual_v1",
         "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}
     }
@@ -77,7 +90,7 @@ def generate_voice(text):
 
 @app.get("/")
 def home():
-    return {"status": "Alfred Online (Memory + Voice + Vision)"}
+    return {"status": "Alfred Online (Memory + Voice + Vision + Art)"}
 
 @app.post("/command")
 def process_command(request: UserRequest):
@@ -86,11 +99,9 @@ def process_command(request: UserRequest):
     try:
         now = datetime.now().strftime("%A, %B %d, %Y at %H:%M")
         
-        # --- 1. PREPARE MESSAGE & HISTORY ---
-        # We build the chat session using the history sent from the phone
+        # --- 1. PREPARE HISTORY ---
         chat_history = []
         for msg in request.history:
-            # Map frontend 'alfred'/'user' to Gemini 'model'/'user'
             role = "model" if msg.role == "alfred" else "user"
             chat_history.append(types.Content(role=role, parts=[types.Part.from_text(text=msg.content)]))
 
@@ -101,13 +112,8 @@ def process_command(request: UserRequest):
             current_parts.append(types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg"))
 
         # --- 2. GENERATE ---
-        # We use generate_content but provide history as context if needed, 
-        # or use chats.create() logic. For simplicity/reliability in REST, 
-        # we append history to the contents or use the chat interface.
-        # The 2.0 SDK handles lists of contents well.
-        
-        # Let's use the chat interface for memory awareness
-        chat = client.chats.create(
+        # We use chat mode to maintain memory context
+        chat_session = client.chats.create(
             model='gemini-2.0-flash',
             history=chat_history,
             config=types.GenerateContentConfig(
@@ -116,7 +122,7 @@ def process_command(request: UserRequest):
             )
         )
         
-        response = chat.send_message(message=current_parts)
+        response = chat_session.send_message(message=current_parts)
         reply = response.text
         
         # --- 3. VOICE ---
