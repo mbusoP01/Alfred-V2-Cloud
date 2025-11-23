@@ -8,5 +8,5 @@ fpdf
 python-docx
 python-pptx
 pytz
-matplotlib
-numpy
+beautifulsoup4
+youtube-transcript-api
