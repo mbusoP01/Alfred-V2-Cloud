@@ -2,7 +2,7 @@
 import os
 import base64
 import requests
-import re  # <--- NEW: To clean URLs from voice
+import re
 from google import genai
 from google.genai import types
 from datetime import datetime
@@ -20,18 +20,19 @@ ALFRED_SYSTEM_INSTRUCTIONS = """
 You are Alfred, an elite intelligent assistant.
 User: Mbuso (Sir). Location: South Africa.
 
-PROTOCOL:
-1. FOCUS: Answer the CURRENT query directly.
-2. MEMORY: Use conversation history for context.
-3. TOOLS: Use Google Search for current events.
-
-CAPABILITY - IMAGE GENERATION:
-If the user asks to "generate", "draw", "create", or "make" an image:
-1. You MUST NOT use Google Search.
+*** CRITICAL PROTOCOL: IMAGE GENERATION ***
+You HAVE the ability to generate images using the Pollinations API.
+If the user asks to "generate", "draw", "create", "make", or "show" an image:
+1. Do NOT say "I cannot create images".
 2. You MUST output a Markdown Image Link.
 3. Format: ![Description](https://image.pollinations.ai/prompt/{description_with_underscores}?nologo=true)
 4. Example: ![A red car](https://image.pollinations.ai/prompt/A_red_car_in_space?nologo=true)
-5. Do not explain the link. Just show it.
+5. Do NOT use Google Search for this request. Just output the link.
+
+PROTOCOL FOR TEXT:
+1. FOCUS: Answer the CURRENT query directly.
+2. MEMORY: Use conversation history for context.
+3. TOOLS: Use Google Search for current events/news only.
 """
 
 # --- 3. SETUP CLIENT ---
@@ -67,13 +68,11 @@ def generate_voice(text):
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{BRIAN_VOICE_ID}"
     headers = {"Accept": "audio/mpeg", "Content-Type": "application/json", "xi-api-key": ELEVENLABS_API_KEY}
     
-    # --- CLEAN TEXT FOR VOICE ---
-    # 1. Remove Markdown Images ![...](...) so he doesn't read the URL
-    clean_text = re.sub(r'!\[.*?\]\(.*?\)', '', text)
-    # 2. Remove bold/italic symbols
+    # Clean text: Remove Markdown images and symbols so he doesn't read them
+    clean_text = re.sub(r'!\[.*?\]\(.*?\)', '', text) 
     clean_text = clean_text.replace("*", "").replace("#", "").replace("`", "")
     
-    if not clean_text.strip(): return None # Don't speak if only an image was sent
+    if not clean_text.strip(): return None 
 
     data = {
         "text": clean_text[:1000],
@@ -112,7 +111,6 @@ def process_command(request: UserRequest):
             current_parts.append(types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg"))
 
         # --- 2. GENERATE ---
-        # We use chat mode to maintain memory context
         chat_session = client.chats.create(
             model='gemini-2.0-flash',
             history=chat_history,
