@@ -24,9 +24,6 @@ ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY")
 BRIAN_VOICE_ID = "nPczCjzI2devNBz1zQrb"
 HUGGINGFACE_API_KEY = os.environ.get("HUGGINGFACE_API_KEY")
 
-# --- MODEL CONFIGURATION ---
-HF_IMAGE_URL = "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-dev"
-
 ALFRED_SYSTEM_INSTRUCTIONS = """
 You are Alfred, an elite intelligent assistant.
 User: Mbuso (Sir). Location: South Africa.
@@ -34,7 +31,7 @@ User: Mbuso (Sir). Location: South Africa.
 PROTOCOL:
 1. Answer the CURRENT query directly.
 2. IF A FILE IS UPLOADED: Analyze it thoroughly.
-3. IMAGE GEN: If asked to generate/create an image:
+3. IMAGE GEN: If asked to generate/create/draw an image:
    - Reply exactly: "IMAGE_GEN_REQUEST: [Detailed Prompt]"
    - Do not generate a link.
 """
@@ -65,30 +62,41 @@ class UserRequest(BaseModel):
     speak: bool = False
     history: List[ChatMessage] = []
 
-# --- ROBUST IMAGE GEN ---
+# --- ROBUST IMAGE GEN (Auto-Fallback) ---
 def generate_high_quality_image(prompt):
     if not HUGGINGFACE_API_KEY: return None, None
+    
     headers = {"Authorization": f"Bearer {HUGGINGFACE_API_KEY}"}
     payload = {"inputs": prompt}
     
-    try:
-        response = requests.post(HF_IMAGE_URL, headers=headers, json=payload)
-        
-        # Retry if loading
-        if response.status_code == 503:
-            time.sleep(5)
-            response = requests.post(HF_IMAGE_URL, headers=headers, json=payload)
+    # List of models to try (Best -> Fastest)
+    models = [
+        "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-dev",       # King of Quality
+        "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-3.5-large", # Fast & New
+        "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0" # Old Reliable
+    ]
 
-        # CRITICAL FIX: Check if response is actually an image
-        if response.status_code == 200 and "image" in response.headers.get("content-type", ""):
-            image_b64 = base64.b64encode(response.content).decode('utf-8')
-            filename = f"flux_gen_{datetime.now().strftime('%H%M%S')}.jpg"
-            return image_b64, filename
-        else:
-            print(f"Flux Error: {response.text}")
+    for model_url in models:
+        try:
+            print(f"Trying model: {model_url}...")
+            response = requests.post(model_url, headers=headers, json=payload)
             
-    except Exception as e:
-        print(f"Image Gen Exception: {e}")
+            # If successful image
+            if response.status_code == 200 and "image" in response.headers.get("content-type", ""):
+                image_b64 = base64.b64encode(response.content).decode('utf-8')
+                filename = f"gen_{datetime.now().strftime('%H%M%S')}.jpg"
+                return image_b64, filename
+            
+            # If busy, wait 1s and try next model
+            elif "loading" in response.text.lower() or response.status_code == 503:
+                print("Model busy, switching...")
+                time.sleep(1)
+                continue
+                
+        except Exception as e:
+            print(f"Gen Error: {e}")
+            continue
+
     return None, None
 
 # --- FILE FACTORY ---
@@ -134,7 +142,7 @@ def generate_voice(text):
 
 @app.get("/")
 def home():
-    return {"status": "Alfred Online (Fixed)"}
+    return {"status": "Alfred Online (Auto-Fallback Engine)"}
 
 @app.post("/command")
 def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(None)):
@@ -164,12 +172,21 @@ def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(
                 current_parts.append(types.Part.from_bytes(data=file_bytes, mime_type=request.mime_type))
             except: pass
 
+        # Safety Override Config
+        safety_config = [
+            types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="BLOCK_NONE"),
+            types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="BLOCK_NONE"),
+            types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_NONE"),
+            types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="BLOCK_NONE"),
+        ]
+
         chat_session = client.chats.create(
             model='gemini-2.0-flash',
             history=chat_history,
             config=types.GenerateContentConfig(
                 tools=[types.Tool(google_search=types.GoogleSearch())],
-                system_instruction=ALFRED_SYSTEM_INSTRUCTIONS
+                system_instruction=ALFRED_SYSTEM_INSTRUCTIONS,
+                safety_settings=safety_config
             )
         )
         
@@ -189,7 +206,7 @@ def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(
             reply = "I am rendering the image, Sir."
             gen_file_data, gen_filename = generate_high_quality_image(image_prompt)
             if not gen_file_data:
-                reply = "The Flux engine is currently warming up or busy. Please try again in 10 seconds."
+                reply = "All image engines are currently overloaded. Please try again in a moment."
 
         audio_data = generate_voice(reply) if request.speak else None
 
