@@ -5,7 +5,6 @@ import re
 import io
 import time
 import logging
-import asyncio
 from datetime import datetime
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,7 +15,7 @@ from typing import List, Optional
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- STABLE LIBRARY ---
+# --- STABLE LIBRARY (google-generativeai) ---
 import google.generativeai as genai
 
 # --- KEYS ---
@@ -127,8 +126,7 @@ async def process_command(request: UserRequest, x_alfred_auth: Optional[str] = H
             role = "user" if m.role == "user" else "model"
             history_gemini.append({"role": role, "parts": [m.content]})
 
-        # 2. Configure Model (Using Gemini 1.5 Flash which is very stable with Tools)
-        # We enable the built-in Google Search tool
+        # 2. Configure Model (Gemini 1.5 Flash - STABLE & FAST)
         tools = [
             {"google_search": {}} 
         ]
@@ -142,20 +140,9 @@ async def process_command(request: UserRequest, x_alfred_auth: Optional[str] = H
         # 3. Chat Session
         chat = model.start_chat(history=history_gemini)
         
-        # 4. Generate Response (Retry Loop)
-        response_text = "I am having trouble connecting."
-        for attempt in range(3):
-            try:
-                response = chat.send_message(request.command)
-                response_text = response.text
-                break
-            except Exception as e:
-                if "429" in str(e): # Rate Limit
-                    time.sleep(2)
-                    continue
-                logger.error(f"Gemini API Error: {e}")
-                response_text = f"Error: {str(e)}"
-                break
+        # 4. Generate Response
+        response = chat.send_message(request.command)
+        response_text = response.text
 
         # 5. Handle Actions (Image/File)
         gen_file_data, gen_filename, gen_mime = None, None, None
@@ -188,4 +175,4 @@ async def process_command(request: UserRequest, x_alfred_auth: Optional[str] = H
         }
 
     except Exception as e:
-        return {"response": f"Critical Server Error: {str(e)}"}
+        return {"response": f"Server Error: {str(e)}"}
