@@ -38,9 +38,13 @@ PROTOCOL:
 2. IF A LINK IS PROVIDED: The server has read it. Summarize or analyze the 'Link Content'.
 3. IF A FILE IS UPLOADED: Analyze it.
 
-*** CRITICAL: YOUTUBE FALLBACK ***
-If the System Input says "[YOUTUBE_FALLBACK_METADATA]", it means the server couldn't watch the video directly.
-ACTION: Use your **Google Search Tool** to search for the video title/URL provided in the metadata and generate the summary based on search results. Do not complain about access.
+*** CRITICAL: YOUTUBE FALLBACK STRATEGY ***
+If you see [YOUTUBE_FALLBACK_METADATA] in the input, it means the direct video feed was blocked.
+ACTION: You MUST use your **Google Search Tool**.
+1. Search for the **Video Title** provided in the metadata.
+2. Look for summaries, reviews, or articles about this video content.
+3. Synthesize a summary from those search results.
+DO NOT simply say "I cannot access it." USE THE TOOLS.
 
 *** CRITICAL: FILE GENERATION ***
 If user asks to create/generate a file:
@@ -99,12 +103,11 @@ def get_url_content(text):
                 except Exception:
                     # Attempt 2: Fallback to Metadata (Title/Desc) so Alfred can Search
                     try:
-                        # We scrape the page just for title/desc to give Alfred a hint
                         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
                         res = requests.get(url, headers=headers, timeout=5)
                         soup = BeautifulSoup(res.content, 'html.parser')
                         title = soup.title.string if soup.title else "Unknown Title"
-                        return f"[YOUTUBE_FALLBACK_METADATA]: Title: {title} | URL: {url} | (Direct Transcript Blocked - Use Search Tool)"
+                        return f"[YOUTUBE_FALLBACK_METADATA]: Title: {title} | URL: {url} | (Transcript Blocked - INITIATE DEEP SEARCH)"
                     except:
                         return "[YOUTUBE ERROR]: Video inaccessible and metadata failed."
 
@@ -142,7 +145,7 @@ def generate_high_quality_image(prompt):
         except: continue
     return None, None
 
-# --- FILE FACTORY (BULLETPROOF) ---
+# --- FILE FACTORY (BULLETPROOF + SANITIZED) ---
 def create_file(content, file_type):
     buffer = io.BytesIO()
     timestamp = datetime.now().strftime('%H%M%S')
@@ -166,6 +169,7 @@ def create_file(content, file_type):
                         pdf.ln(5)
                     
                     row_data = [cell.strip() for cell in line.split('|')]
+                    # Sanitize empty ends from markdown
                     if row_data and row_data[0] == '': row_data.pop(0)
                     if row_data and row_data[-1] == '': row_data.pop()
                     
@@ -175,7 +179,7 @@ def create_file(content, file_type):
                     # Flush Table
                     if in_table and table_buffer:
                         try:
-                            # ATTEMPT TO RENDER TABLE
+                            # Normalizing Columns
                             max_cols = max(len(row) for row in table_buffer)
                             normalized_data = []
                             for row in table_buffer:
@@ -187,8 +191,8 @@ def create_file(content, file_type):
                                     r = table.row()
                                     for item in row: r.cell(str(item))
                         except Exception:
-                            # FALLBACK: If table fails, print as text
-                            pdf.set_font("Courier", size=10) # Monospace for alignment
+                            # Fallback to text if table breaks
+                            pdf.set_font("Courier", size=10)
                             for row in table_buffer:
                                 pdf.multi_cell(0, 5, " | ".join(row))
                             pdf.set_font("Helvetica", size=12)
@@ -202,7 +206,7 @@ def create_file(content, file_type):
                         safe_text = line.encode('latin-1', 'replace').decode('latin-1')
                         pdf.multi_cell(0, 7, safe_text)
             
-            # Flush end of file table
+            # Final Flush
             if in_table and table_buffer:
                 try:
                     max_cols = max(len(row) for row in table_buffer)
@@ -211,12 +215,10 @@ def create_file(content, file_type):
                         for row in normalized_data:
                             r = table.row()
                             for item in row: r.cell(str(item))
-                except:
-                    pass
+                except: pass
 
             return base64.b64encode(pdf.output(dest='S').encode('latin-1')).decode('utf-8'), f"{filename}.pdf"
 
-        # ... (Keep docx/pptx logic same as before) ...
         elif file_type == "docx":
             from docx import Document
             doc = Document()
@@ -238,9 +240,8 @@ def create_file(content, file_type):
             return base64.b64encode(content.encode('utf-8')).decode('utf-8'), f"{filename}.txt"
             
     except Exception as e:
-        # ULTIMATE FALLBACK: Return plain text if PDF crashes completely
         print(f"File Gen Critical Error: {e}")
-        return base64.b64encode(f"Error creating formatted file. Raw content:\n\n{content}".encode('utf-8')).decode('utf-8'), f"{filename}_fallback.txt"
+        return base64.b64encode(f"Error creating file. Raw content:\n\n{content}".encode('utf-8')).decode('utf-8'), f"{filename}_fallback.txt"
     
     return None, None
 
@@ -273,7 +274,7 @@ def generate_voice(text):
 
 @app.get("/")
 def home():
-    return {"status": "Alfred V2.2 Online (Cloud Fallback Enabled)"}
+    return {"status": "Alfred V2.3 Online (Stability + Deep Search)"}
 
 @app.post("/command")
 def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(None)):
@@ -293,7 +294,6 @@ def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(
         elif "presentation" in lower_cmd or "pptx" in lower_cmd: requested_type = "pptx"
         elif "text file" in lower_cmd or "txt" in lower_cmd: requested_type = "txt"
 
-        # Always use Thinking model if not specified, it's smarter for fallbacks
         selected_model = 'gemini-2.0-flash-thinking-exp-01-21' if request.thinking_mode else 'gemini-2.0-flash'
 
         chat_history = []
@@ -304,7 +304,6 @@ def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(
         # --- SCRAPE LINK ---
         scraped_content = get_url_content(request.command)
         prompt_text = ""
-        
         if scraped_content:
             prompt_text = f"[System Info: {scraped_content}]\n\nUser Query: {request.command}"
         else:
@@ -317,22 +316,31 @@ def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(
                 current_parts.append(types.Part.from_bytes(data=file_bytes, mime_type=request.mime_type))
             except: pass
 
-        chat_session = client.chats.create(
-            model=selected_model,
-            history=chat_history,
-            config=types.GenerateContentConfig(
-                tools=[types.Tool(google_search=types.GoogleSearch())],
-                system_instruction=ALFRED_SYSTEM_INSTRUCTIONS,
-                safety_settings=[
-                    types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="BLOCK_NONE"),
-                    types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="BLOCK_NONE"),
-                    types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_NONE"),
-                    types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="BLOCK_NONE"),
-                ]
-            )
-        )
+        # --- AUTO-RETRY MECHANISM (Fixes 500 Errors) ---
+        response = None
+        for attempt in range(3):
+            try:
+                chat_session = client.chats.create(
+                    model=selected_model,
+                    history=chat_history,
+                    config=types.GenerateContentConfig(
+                        tools=[types.Tool(google_search=types.GoogleSearch())],
+                        system_instruction=ALFRED_SYSTEM_INSTRUCTIONS,
+                        safety_settings=[
+                            types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="BLOCK_NONE"),
+                            types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="BLOCK_NONE"),
+                            types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_NONE"),
+                            types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="BLOCK_NONE"),
+                        ]
+                    )
+                )
+                response = chat_session.send_message(message=current_parts)
+                break # Success, exit loop
+            except Exception as e:
+                print(f"Attempt {attempt+1} failed: {e}")
+                if attempt == 2: raise e # Raise error if final attempt fails
+                time.sleep(1) # Wait 1 sec before retrying
         
-        response = chat_session.send_message(message=current_parts)
         reply = response.text
         
         gen_file_data = None
@@ -349,7 +357,6 @@ def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(
                 if gen_file_data:
                     reply = f"I have successfully created the {requested_type.upper()} file."
                 else:
-                     # This branch should technically be impossible now with the Ultimate Fallback
                     reply = "I attempted to create the file, but an internal error occurred."
             except Exception as e:
                 reply = f"I prepared the content, but the file assembly failed. Error: {str(e)}"
