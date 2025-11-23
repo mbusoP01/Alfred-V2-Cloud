@@ -10,3 +10,5 @@ python-pptx
 pytz
 beautifulsoup4
 youtube-transcript-api
+numpy
+matplotlib
