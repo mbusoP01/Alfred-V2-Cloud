@@ -15,6 +15,8 @@
 
     <style>
         :root { --bg: #000000; --blue: #0A84FF; --gray: #262629; --text: #FFFFFF; }
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
         body {
             font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
             background-color: var(--bg); color: var(--text);
@@ -26,7 +28,7 @@
             display: flex; align-items: center; justify-content: space-between;
             padding: 15px 20px; background: rgba(28,28,30,0.95);
             backdrop-filter: blur(20px); border-bottom: 1px solid #333;
-            position: fixed; top: 0; width: 100%; z-index: 100;
+            position: fixed; top: 0; left: 0; right: 0; z-index: 100;
         }
         .header-title { font-weight: 700; font-size: 16px; letter-spacing: 1px; }
         .icon-btn { background: none; border: none; color: var(--blue); font-size: 24px; cursor: pointer; padding: 5px; }
@@ -40,43 +42,49 @@
         /* MESSAGES */
         .message { 
             max-width: 88%; padding: 12px 16px; border-radius: 18px; 
-            font-size: 15px; line-height: 1.5; word-wrap: break-word;
-            position: relative; 
+            font-size: 15px; line-height: 1.5; word-wrap: break-word; position: relative; 
         }
         .user { align-self: flex-end; background-color: var(--blue); color: white; border-bottom-right-radius: 4px; }
         .alfred { align-self: flex-start; background-color: var(--gray); color: #eee; border-bottom-left-radius: 4px; }
         
         /* MARKDOWN & CODE STYLES */
-        .message pre { 
-            background: #1e1e1e; padding: 10px; border-radius: 8px; overflow-x: auto; margin: 10px 0; 
-            border: 1px solid #333;
-        }
+        .message pre { background: #1e1e1e; padding: 10px; border-radius: 8px; overflow-x: auto; margin: 10px 0; border: 1px solid #333; }
         .message code { font-family: 'Menlo', monospace; font-size: 13px; }
         .message p { margin: 0 0 8px 0; }
         .message p:last-child { margin: 0; }
         .message ul, .message ol { margin: 5px 0; padding-left: 20px; }
         .message a { color: #4da6ff; }
 
-        /* INPUT AREA */
+        /* INPUT AREA FIX */
         .input-area {
-            position: fixed; bottom: 0; left: 0; width: 100%; padding: 10px 15px;
+            position: fixed; 
+            bottom: 0; 
+            left: 0; 
+            right: 0; /* Pins to both edges correctly */
+            width: 100%; /* Backup */
+            padding: 10px 15px;
             padding-bottom: max(10px, env(safe-area-inset-bottom));
             background: rgba(28,28,30,0.95); backdrop-filter: blur(20px);
-            display: flex; align-items: center; gap: 10px; border-top: 1px solid #333; z-index: 200;
+            display: flex; align-items: center; gap: 10px; 
+            border-top: 1px solid #333; z-index: 200;
         }
+
         input[type="text"] {
-            flex: 1; background: #333; border: none; border-radius: 20px;
+            flex: 1; /* Takes up all remaining space */
+            min-width: 0; /* Prevents input from forcing bar wide */
+            background: #333; border: none; border-radius: 20px;
             padding: 12px 15px; color: white; font-size: 16px; outline: none;
         }
         
-        /* SMART ACTION BUTTON (MIC / SEND) */
+        /* Buttons Fixed Size */
         .action-main-btn {
             background: var(--blue); border: none; border-radius: 50%; width: 40px; height: 40px;
             color: white; display: flex; align-items: center; justify-content: center; cursor: pointer;
-            font-size: 18px; transition: transform 0.2s;
+            font-size: 18px; transition: transform 0.2s; flex-shrink: 0; /* Never shrink */
         }
         .action-main-btn:active { transform: scale(0.9); }
         .mic-active { background-color: #ff3b30; animation: pulse 1.5s infinite; }
+        .icon-btn, .voice-toggle { flex-shrink: 0; } /* Never shrink */
 
         @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.6; } 100% { opacity: 1; } }
         
@@ -100,7 +108,7 @@
             background: rgba(0,0,0,0.7); z-index: 250; display: none;
         }
         .overlay.show { display: block; }
-        .voice-toggle { font-size: 20px; opacity: 0.5; background: none; border: none; cursor: pointer; }
+        .voice-toggle { font-size: 20px; opacity: 0.5; background: none; border: none; cursor: pointer; padding: 0 5px; }
         .voice-toggle.on { opacity: 1; text-shadow: 0 0 10px var(--blue); }
         #fileInput { display: none; }
 
@@ -151,7 +159,7 @@
             recognition.onresult = (event) => {
                 const transcript = event.results[0][0].transcript;
                 document.getElementById('userInput').value = transcript;
-                updateButtonState(); // Switch to Send icon
+                updateButtonState();
             };
             recognition.onend = () => {
                 document.getElementById('actionBtn').classList.remove('mic-active');
@@ -165,14 +173,13 @@
             updateButtonState();
         }
 
-        // --- UI LOGIC ---
         function updateButtonState() {
             const text = document.getElementById('userInput').value.trim();
             const btn = document.getElementById('actionBtn');
             if (text.length > 0 || currentImage) {
-                btn.innerText = "➤"; // Send Icon
+                btn.innerText = "➤";
             } else {
-                btn.innerText = "🎙️"; // Mic Icon
+                btn.innerText = "🎙️";
             }
         }
 
@@ -200,7 +207,6 @@
             isVoiceOn ? btn.classList.add('on') : btn.classList.remove('on');
         }
 
-        // --- CHAT LOGIC ---
         function startNewChat() {
             currentChatId = Date.now();
             chats.unshift({ id: currentChatId, title: "New Session", messages: [] });
@@ -228,7 +234,6 @@
             const div = document.createElement('div');
             div.className = `message ${sender}`;
             
-            // Parse Markdown & Highlight Code
             div.innerHTML = marked.parse(text);
             div.querySelectorAll('pre code').forEach((block) => {
                 hljs.highlightElement(block);
@@ -246,7 +251,7 @@
 
             if (save && currentChatId) {
                 const chat = chats.find(c => c.id === currentChatId);
-                chat.messages.push({ text, sender, audio: audioData }); // Store audio ref too if needed
+                chat.messages.push({ text, sender, audio: audioData });
                 if (sender === 'user' && chat.messages.length <= 2) {
                     chat.title = text.substring(0, 20) + "...";
                 }
@@ -262,12 +267,11 @@
             addMessage(text, 'user');
             input.value = '';
             updateButtonState();
+            input.focus(); 
 
-            // Prepare History (Last 6 messages context)
             const chat = chats.find(c => c.id === currentChatId);
             const historyContext = chat.messages.slice(-6).map(m => ({
-                role: m.sender, 
-                content: m.text
+                role: m.sender, content: m.text
             }));
 
             const loadingDiv = document.createElement('div');
@@ -301,7 +305,6 @@
             updateButtonState();
         }
 
-        // --- HELPERS ---
         function saveChats() {
             localStorage.setItem('alfred_chats', JSON.stringify(chats));
             renderHistory();
