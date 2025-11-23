@@ -19,10 +19,7 @@ from pydantic import BaseModel
 from typing import List, Optional
 
 # --- LIBRARIES ---
-from fpdf import FPDF 
-from fpdf.fonts import FontFace
-from docx import Document
-from pptx import Presentation
+from fpdf import FPDF
 from bs4 import BeautifulSoup
 from youtube_transcript_api import YouTubeTranscriptApi
 
@@ -40,7 +37,7 @@ PROTOCOL:
 1. Answer the CURRENT query directly.
 2. IF A LINK IS PROVIDED: The server has read it. Summarize or analyze the 'Link Content'.
 3. IF A FILE IS UPLOADED: Analyze it.
-4. ERRORS: If you encounter an error (like a YouTube link you can't read), explain EXACTLY why to the user.
+4. ERRORS: If you see an error in the system prompt (e.g. [ERROR: ...]), explain it clearly to the user.
 
 *** CRITICAL: FILE GENERATION ***
 If user asks to create/generate a file:
@@ -96,17 +93,21 @@ def get_url_content(text):
             
             if video_id:
                 try:
+                    # Attempt 1: Standard API
                     transcript = YouTubeTranscriptApi.get_transcript(video_id)
                     full_text = " ".join([t['text'] for t in transcript])
                     return f"[YOUTUBE TRANSCRIPT]: {full_text[:15000]}"
                 except Exception as e:
                     # Specific YouTube Errors
-                    if "TranscriptsDisabled" in str(e):
-                        return "[ERROR]: This video has subtitles disabled. I cannot summarize it."
-                    elif "NoTranscriptFound" in str(e):
-                        return "[ERROR]: No English transcript found for this video."
+                    err_str = str(e)
+                    if "TranscriptsDisabled" in err_str:
+                        return "[System Error: This video has subtitles disabled. I cannot summarize it.]"
+                    elif "NoTranscriptFound" in err_str:
+                        return "[System Error: No English transcript found for this video.]"
+                    elif "CookiesRequired" in err_str:
+                        return "[System Error: YouTube is blocking the server (Cookies Required). Try a different video.]"
                     else:
-                        return f"[ERROR READING YOUTUBE]: {str(e)}"
+                        return f"[System Error Reading YouTube]: {err_str}"
         
         # STANDARD WEB LOGIC
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
@@ -150,67 +151,88 @@ def create_file(content, file_type):
     
     try:
         if file_type == "pdf":
-            # UPDATED PDF LOGIC WITH TABLES
+            # --- ROBUST PDF TABLE ENGINE ---
             pdf = FPDF()
             pdf.add_page()
             pdf.set_font("Helvetica", size=12)
             
             lines = content.split('\n')
-            
-            # Simple parser to detect tables vs text
             table_buffer = []
             in_table = False
             
             for line in lines:
-                # Basic Markdown Table Detection
-                if "|" in line and len(line.strip()) > 2:
+                # Detect Table Row (must contain | and have substantial content)
+                if "|" in line and len(line.strip()) > 3:
                     if not in_table:
                         in_table = True
-                        pdf.ln(5) # Space before table
+                        pdf.ln(5)
                     
-                    # Clean markdown row
-                    row_data = [cell.strip() for cell in line.split('|') if cell.strip()]
-                    # Ignore separator lines like |---|---|
-                    if "---" not in line:
+                    # Clean Row
+                    row_data = [cell.strip() for cell in line.split('|')]
+                    # Remove empty leading/trailing cells from markdown | format
+                    if row_data and row_data[0] == '': row_data.pop(0)
+                    if row_data and row_data[-1] == '': row_data.pop()
+                    
+                    # Ignore separator lines (e.g. |---|---|)
+                    if not any("---" in cell for cell in row_data):
                         table_buffer.append(row_data)
                 else:
-                    # If we were in a table and now hit text, render the table
+                    # FLUSH TABLE if we hit text
                     if in_table and table_buffer:
                         try:
+                            # Normalize Row Lengths (Fixes "Internal Formatting Error")
+                            max_cols = max(len(row) for row in table_buffer)
+                            normalized_data = []
+                            for row in table_buffer:
+                                while len(row) < max_cols:
+                                    row.append("") # Pad short rows
+                                normalized_data.append(row[:max_cols]) # Trim long rows
+                            
+                            # Render
                             with pdf.table() as table:
-                                for row in table_buffer:
+                                for row in normalized_data:
                                     r = table.row()
                                     for item in row:
-                                        r.cell(item)
+                                        r.cell(str(item))
                         except Exception as e:
-                            pdf.multi_cell(0, 10, "Error rendering table: " + str(e))
+                            # Fallback to plain text if table fails (Prevents crash)
+                            pdf.set_font("Courier", size=10)
+                            for row in table_buffer:
+                                pdf.multi_cell(0, 5, " | ".join(row))
+                            pdf.set_font("Helvetica", size=12)
                         
                         table_buffer = []
                         in_table = False
-                        pdf.ln(5) # Space after table
+                        pdf.ln(5)
 
-                    # Render normal text
+                    # Render Normal Text
                     if line.strip():
-                        # Handle headers crudely
                         if line.startswith("#"):
                             pdf.set_font("Helvetica", style="B", size=14)
                             pdf.cell(0, 10, line.replace("#", "").strip(), new_x="LMARGIN", new_y="NEXT")
                             pdf.set_font("Helvetica", size=12)
                         else:
+                            # Sanitize text
                             safe_text = line.encode('latin-1', 'replace').decode('latin-1')
                             pdf.multi_cell(0, 7, safe_text)
             
-            # Flush final table if exists
+            # Flush final table if document ends with one
             if in_table and table_buffer:
-                 with pdf.table() as table:
-                    for row in table_buffer:
-                        r = table.row()
-                        for item in row:
-                            r.cell(item)
+                try:
+                    max_cols = max(len(row) for row in table_buffer)
+                    normalized_data = [row + [""] * (max_cols - len(row)) for row in table_buffer]
+                    with pdf.table() as table:
+                        for row in normalized_data:
+                            r = table.row()
+                            for item in row:
+                                r.cell(str(item))
+                except:
+                    pass
 
             return base64.b64encode(pdf.output(dest='S').encode('latin-1')).decode('utf-8'), f"{filename}.pdf"
 
         elif file_type == "docx":
+            from docx import Document
             doc = Document()
             doc.add_heading('Alfred Generation', 0)
             doc.add_paragraph(content)
@@ -218,6 +240,7 @@ def create_file(content, file_type):
             return base64.b64encode(buffer.getvalue()).decode('utf-8'), f"{filename}.docx"
             
         elif file_type == "pptx":
+            from pptx import Presentation
             prs = Presentation()
             slide = prs.slides.add_slide(prs.slide_layouts[1])
             slide.shapes.title.text = "Alfred Presentation"
@@ -230,7 +253,7 @@ def create_file(content, file_type):
             
     except Exception as e:
         print(f"File Gen Error: {e}")
-        return None, None
+        return None, None # This triggers the error message you saw
     
     return None, None
 
@@ -337,7 +360,7 @@ def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(
                 if gen_file_data:
                     reply = f"I have successfully created the {requested_type.upper()} file."
                 else:
-                    reply = "I attempted to create the file, but an internal formatting error occurred."
+                    reply = "I attempted to create the file, but the formatting was inconsistent. I recommend a text file instead."
             except Exception as e:
                 reply = f"I prepared the content, but the file assembly failed. Error: {str(e)}"
 
