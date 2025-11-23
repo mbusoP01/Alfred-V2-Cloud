@@ -19,7 +19,8 @@ from pydantic import BaseModel
 from typing import List, Optional
 
 # --- LIBRARIES ---
-from fpdf import FPDF
+from fpdf import FPDF 
+from fpdf.fonts import FontFace
 from docx import Document
 from pptx import Presentation
 from bs4 import BeautifulSoup
@@ -39,11 +40,13 @@ PROTOCOL:
 1. Answer the CURRENT query directly.
 2. IF A LINK IS PROVIDED: The server has read it. Summarize or analyze the 'Link Content'.
 3. IF A FILE IS UPLOADED: Analyze it.
+4. ERRORS: If you encounter an error (like a YouTube link you can't read), explain EXACTLY why to the user.
 
 *** CRITICAL: FILE GENERATION ***
 If user asks to create/generate a file:
 1. Do NOT chat.
 2. Wrap content in: <<<FILE_START>>> content <<<FILE_END>>>.
+3. For PDF TABLES: Use standard Markdown tables. I will format them beautifully.
 
 *** CRITICAL: IMAGE GENERATION ***
 If asked to generate an image:
@@ -85,16 +88,27 @@ def get_url_content(text):
     print(f"Scraping URL: {url}")
     
     try:
+        # YOUTUBE LOGIC
         if "youtube.com" in url or "youtu.be" in url:
             video_id = None
             if "v=" in url: video_id = url.split("v=")[1].split("&")[0]
             elif "youtu.be" in url: video_id = url.split("/")[-1]
             
             if video_id:
-                transcript = YouTubeTranscriptApi.get_transcript(video_id)
-                full_text = " ".join([t['text'] for t in transcript])
-                return f"[YOUTUBE TRANSCRIPT]: {full_text[:10000]}"
+                try:
+                    transcript = YouTubeTranscriptApi.get_transcript(video_id)
+                    full_text = " ".join([t['text'] for t in transcript])
+                    return f"[YOUTUBE TRANSCRIPT]: {full_text[:15000]}"
+                except Exception as e:
+                    # Specific YouTube Errors
+                    if "TranscriptsDisabled" in str(e):
+                        return "[ERROR]: This video has subtitles disabled. I cannot summarize it."
+                    elif "NoTranscriptFound" in str(e):
+                        return "[ERROR]: No English transcript found for this video."
+                    else:
+                        return f"[ERROR READING YOUTUBE]: {str(e)}"
         
+        # STANDARD WEB LOGIC
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
         response = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(response.content, 'html.parser')
@@ -133,20 +147,76 @@ def create_file(content, file_type):
     buffer = io.BytesIO()
     timestamp = datetime.now().strftime('%H%M%S')
     filename = f"alfred_doc_{timestamp}"
+    
     try:
         if file_type == "pdf":
+            # UPDATED PDF LOGIC WITH TABLES
             pdf = FPDF()
             pdf.add_page()
-            pdf.set_font("Arial", size=12)
-            safe_text = content.encode('latin-1', 'replace').decode('latin-1')
-            pdf.multi_cell(0, 10, safe_text)
+            pdf.set_font("Helvetica", size=12)
+            
+            lines = content.split('\n')
+            
+            # Simple parser to detect tables vs text
+            table_buffer = []
+            in_table = False
+            
+            for line in lines:
+                # Basic Markdown Table Detection
+                if "|" in line and len(line.strip()) > 2:
+                    if not in_table:
+                        in_table = True
+                        pdf.ln(5) # Space before table
+                    
+                    # Clean markdown row
+                    row_data = [cell.strip() for cell in line.split('|') if cell.strip()]
+                    # Ignore separator lines like |---|---|
+                    if "---" not in line:
+                        table_buffer.append(row_data)
+                else:
+                    # If we were in a table and now hit text, render the table
+                    if in_table and table_buffer:
+                        try:
+                            with pdf.table() as table:
+                                for row in table_buffer:
+                                    r = table.row()
+                                    for item in row:
+                                        r.cell(item)
+                        except Exception as e:
+                            pdf.multi_cell(0, 10, "Error rendering table: " + str(e))
+                        
+                        table_buffer = []
+                        in_table = False
+                        pdf.ln(5) # Space after table
+
+                    # Render normal text
+                    if line.strip():
+                        # Handle headers crudely
+                        if line.startswith("#"):
+                            pdf.set_font("Helvetica", style="B", size=14)
+                            pdf.cell(0, 10, line.replace("#", "").strip(), new_x="LMARGIN", new_y="NEXT")
+                            pdf.set_font("Helvetica", size=12)
+                        else:
+                            safe_text = line.encode('latin-1', 'replace').decode('latin-1')
+                            pdf.multi_cell(0, 7, safe_text)
+            
+            # Flush final table if exists
+            if in_table and table_buffer:
+                 with pdf.table() as table:
+                    for row in table_buffer:
+                        r = table.row()
+                        for item in row:
+                            r.cell(item)
+
             return base64.b64encode(pdf.output(dest='S').encode('latin-1')).decode('utf-8'), f"{filename}.pdf"
+
         elif file_type == "docx":
             doc = Document()
             doc.add_heading('Alfred Generation', 0)
             doc.add_paragraph(content)
             doc.save(buffer)
             return base64.b64encode(buffer.getvalue()).decode('utf-8'), f"{filename}.docx"
+            
         elif file_type == "pptx":
             prs = Presentation()
             slide = prs.slides.add_slide(prs.slide_layouts[1])
@@ -154,10 +224,14 @@ def create_file(content, file_type):
             slide.placeholders[1].text = content
             prs.save(buffer)
             return base64.b64encode(buffer.getvalue()).decode('utf-8'), f"{filename}.pptx"
+            
         elif file_type == "txt":
             return base64.b64encode(content.encode('utf-8')).decode('utf-8'), f"{filename}.txt"
+            
     except Exception as e:
         print(f"File Gen Error: {e}")
+        return None, None
+    
     return None, None
 
 # --- CHART ENGINE ---
@@ -189,7 +263,7 @@ def generate_voice(text):
 
 @app.get("/")
 def home():
-    return {"status": "Alfred Online (Researcher + Fixes)"}
+    return {"status": "Alfred V2.1 Online (Cloud)"}
 
 @app.post("/command")
 def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(None)):
@@ -219,7 +293,7 @@ def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(
         # --- SCRAPE LINK ---
         scraped_content = get_url_content(request.command)
         if scraped_content:
-            prompt_text = f"[System: User provided a link. Here is the content: {scraped_content}]\n\nUser Query: {request.command}"
+            prompt_text = f"[System: User provided a link. Content: {scraped_content}]\n\nUser Query: {request.command}"
         else:
             prompt_text = f"[Current SAST Time: {now}] {request.command}"
 
@@ -255,15 +329,17 @@ def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(
         if "<<<FILE_START>>>" in reply:
             try:
                 content = reply.split("<<<FILE_START>>>")[1].split("<<<FILE_END>>>")[0].strip()
-                # ALWAYS remove the raw code from the chat
-                reply = "I have attempted to manufacture the document for you, Sir."
-                if not requested_type: requested_type = "txt" # Fallback
+                # Remove code block from chat for cleaner UI
+                reply = "I have manufactured the document for you, Sir."
+                if not requested_type: requested_type = "txt"
                 
                 gen_file_data, gen_filename = create_file(content, requested_type)
                 if gen_file_data:
                     reply = f"I have successfully created the {requested_type.upper()} file."
-            except Exception:
-                reply = "I prepared the content, but the file assembly failed. Please try again."
+                else:
+                    reply = "I attempted to create the file, but an internal formatting error occurred."
+            except Exception as e:
+                reply = f"I prepared the content, but the file assembly failed. Error: {str(e)}"
 
         # --- 2. IMAGE GEN ---
         elif "IMAGE_GEN_REQUEST:" in reply:
@@ -283,7 +359,8 @@ def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(
         audio_data = generate_voice(reply) if request.speak else None
 
     except Exception as e:
-        reply = f"Processing Error: {str(e)}"
+        # RETURN ACTUAL ERROR TO USER
+        reply = f"SYSTEM ERROR: {str(e)}"
         audio_data, gen_file_data, gen_filename = None, None, None
 
     return {"response": reply, "audio": audio_data, "file": {"data": gen_file_data, "name": gen_filename} if gen_file_data else None}
