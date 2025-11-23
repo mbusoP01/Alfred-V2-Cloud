@@ -5,6 +5,7 @@ import requests
 import re
 import io
 import time
+import pytz # <--- NEW: Timezone support
 from google import genai
 from google.genai import types
 from datetime import datetime
@@ -24,16 +25,28 @@ ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY")
 BRIAN_VOICE_ID = "nPczCjzI2devNBz1zQrb"
 HUGGINGFACE_API_KEY = os.environ.get("HUGGINGFACE_API_KEY")
 
+# --- SYSTEM INSTRUCTIONS (PERSONALITY UPDATE) ---
 ALFRED_SYSTEM_INSTRUCTIONS = """
 You are Alfred, an elite intelligent assistant.
-User: Mbuso (Sir). Location: South Africa.
+User: Mbuso (Sir). 
+User Location: South Africa.
 
 PROTOCOL:
-1. Answer the CURRENT query directly.
-2. IF A FILE IS UPLOADED: Analyze it thoroughly.
-3. IMAGE GEN: If asked to generate/create/draw an image:
-   - Reply exactly: "IMAGE_GEN_REQUEST: [Detailed Prompt]"
-   - Do not generate a link.
+1. TIME AWARENESS: 
+   - You have access to the exact 'Current SAST Time'. USE IT.
+   - If it is early (5AM-11AM): Say "Good morning".
+   - If it is late (10PM-4AM): Occasionally remark "It is getting late, Sir" or "Burning the midnight oil?".
+   - If asked "What time is it?", provide the SAST time provided in the prompt.
+
+2. WEATHER AWARENESS:
+   - You have the 'google_search' tool. 
+   - If the user asks about weather, or if the context implies going outside, USE THE SEARCH TOOL to check the weather in South Africa (or the specific location mentioned).
+   - Do not guess the weather. Search for it.
+
+3. GENERAL:
+   - Answer the CURRENT query directly.
+   - Be proactive. Suggest things. Don't just wait for orders.
+   - If asked to generate/create an image: Reply exactly: "IMAGE_GEN_REQUEST: [Detailed Prompt]"
 """
 
 api_key = os.environ.get("GEMINI_API_KEY")
@@ -62,68 +75,59 @@ class UserRequest(BaseModel):
     speak: bool = False
     history: List[ChatMessage] = []
 
-# --- ROBUST IMAGE GEN (Auto-Fallback) ---
+# --- ROBUST IMAGE GEN ---
 def generate_high_quality_image(prompt):
     if not HUGGINGFACE_API_KEY: return None, None
-    
     headers = {"Authorization": f"Bearer {HUGGINGFACE_API_KEY}"}
     payload = {"inputs": prompt}
     
-    # List of models to try (Best -> Fastest)
+    # Auto-Fallback List
     models = [
-        "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-dev",       # King of Quality
-        "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-3.5-large", # Fast & New
-        "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0" # Old Reliable
+        "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-dev",
+        "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-3.5-large",
+        "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0"
     ]
 
     for model_url in models:
         try:
-            print(f"Trying model: {model_url}...")
             response = requests.post(model_url, headers=headers, json=payload)
-            
-            # If successful image
             if response.status_code == 200 and "image" in response.headers.get("content-type", ""):
                 image_b64 = base64.b64encode(response.content).decode('utf-8')
                 filename = f"gen_{datetime.now().strftime('%H%M%S')}.jpg"
                 return image_b64, filename
-            
-            # If busy, wait 1s and try next model
-            elif "loading" in response.text.lower() or response.status_code == 503:
-                print("Model busy, switching...")
+            elif response.status_code == 503:
                 time.sleep(1)
                 continue
-                
-        except Exception as e:
-            print(f"Gen Error: {e}")
-            continue
-
+        except: continue
     return None, None
 
 # --- FILE FACTORY ---
 def create_file(content, file_type):
     buffer = io.BytesIO()
     filename = f"alfred_doc_{datetime.now().strftime('%H%M%S')}"
-    if file_type == "pdf":
-        pdf = FPDF()
-        pdf.add_page()
-        pdf.set_font("Arial", size=12)
-        safe_text = content.encode('latin-1', 'replace').decode('latin-1')
-        pdf.multi_cell(0, 10, safe_text)
-        return base64.b64encode(pdf.output(dest='S').encode('latin-1')).decode('utf-8'), f"{filename}.pdf"
-    elif file_type == "docx":
-        doc = Document()
-        doc.add_paragraph(content)
-        doc.save(buffer)
-        return base64.b64encode(buffer.getvalue()).decode('utf-8'), f"{filename}.docx"
-    elif file_type == "pptx":
-        prs = Presentation()
-        slide = prs.slides.add_slide(prs.slide_layouts[1])
-        slide.shapes.title.text = "Alfred Presentation"
-        slide.placeholders[1].text = content
-        prs.save(buffer)
-        return base64.b64encode(buffer.getvalue()).decode('utf-8'), f"{filename}.pptx"
-    elif file_type == "txt":
-        return base64.b64encode(content.encode('utf-8')).decode('utf-8'), f"{filename}.txt"
+    try:
+        if file_type == "pdf":
+            pdf = FPDF()
+            pdf.add_page()
+            pdf.set_font("Arial", size=12)
+            safe_text = content.encode('latin-1', 'replace').decode('latin-1')
+            pdf.multi_cell(0, 10, safe_text)
+            return base64.b64encode(pdf.output(dest='S').encode('latin-1')).decode('utf-8'), f"{filename}.pdf"
+        elif file_type == "docx":
+            doc = Document()
+            doc.add_paragraph(content)
+            doc.save(buffer)
+            return base64.b64encode(buffer.getvalue()).decode('utf-8'), f"{filename}.docx"
+        elif file_type == "pptx":
+            prs = Presentation()
+            slide = prs.slides.add_slide(prs.slide_layouts[1])
+            slide.shapes.title.text = "Alfred Presentation"
+            slide.placeholders[1].text = content
+            prs.save(buffer)
+            return base64.b64encode(buffer.getvalue()).decode('utf-8'), f"{filename}.pptx"
+        elif file_type == "txt":
+            return base64.b64encode(content.encode('utf-8')).decode('utf-8'), f"{filename}.txt"
+    except: pass
     return None, None
 
 # --- VOICE ---
@@ -131,7 +135,8 @@ def generate_voice(text):
     if not ELEVENLABS_API_KEY: return None
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{BRIAN_VOICE_ID}"
     headers = {"Accept": "audio/mpeg", "Content-Type": "application/json", "xi-api-key": ELEVENLABS_API_KEY}
-    clean_text = re.sub(r'IMAGE_GEN_REQUEST:.*', 'Generating image now.', text)
+    clean_text = re.sub(r'IMAGE_GEN_REQUEST:.*', 'Generating image.', text)
+    clean_text = re.sub(r'<<<FILE_START>>>.*?<<<FILE_END>>>', 'I have generated the file for you, Sir.', clean_text, flags=re.DOTALL)
     clean_text = clean_text.replace("*", "").replace("#", "").replace("`", "")
     if not clean_text.strip(): return None
     try:
@@ -142,7 +147,9 @@ def generate_voice(text):
 
 @app.get("/")
 def home():
-    return {"status": "Alfred Online (Auto-Fallback Engine)"}
+    # Timezone Debug Check
+    sa_time = datetime.now(pytz.timezone('Africa/Johannesburg')).strftime("%H:%M")
+    return {"status": "Alfred Online", "server_time_sa": sa_time}
 
 @app.post("/command")
 def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(None)):
@@ -152,41 +159,36 @@ def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(
     if not client: return {"response": "Sir, connection severed (No API Key)."}
 
     try:
-        now = datetime.now().strftime("%A, %B %d, %Y at %H:%M")
-        requested_type = None
-        lower_cmd = request.command.lower()
-        if "pdf" in lower_cmd: requested_type = "pdf"
-        elif "word" in lower_cmd or "docx" in lower_cmd: requested_type = "docx"
-        elif "presentation" in lower_cmd or "pptx" in lower_cmd: requested_type = "pptx"
-        elif "text file" in lower_cmd or "txt" in lower_cmd: requested_type = "txt"
-
+        # --- 1. GET PRECISE SAST TIME ---
+        sa_timezone = pytz.timezone('Africa/Johannesburg')
+        now = datetime.now(sa_timezone).strftime("%A, %B %d, %Y at %I:%M %p (SAST)")
+        
+        # --- 2. HISTORY & PROMPT ---
         chat_history = []
         for msg in request.history:
             role = "model" if msg.role == "alfred" else "user"
             chat_history.append(types.Content(role=role, parts=[types.Part.from_text(text=msg.content)]))
 
-        current_parts = [f"[System Time: {now}] {request.command}"]
+        current_parts = [f"[Current SAST Time: {now}] {request.command}"]
         if request.file_data:
             try:
                 file_bytes = base64.b64decode(request.file_data)
                 current_parts.append(types.Part.from_bytes(data=file_bytes, mime_type=request.mime_type))
             except: pass
 
-        # Safety Override Config
-        safety_config = [
-            types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="BLOCK_NONE"),
-            types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="BLOCK_NONE"),
-            types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_NONE"),
-            types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="BLOCK_NONE"),
-        ]
-
+        # --- 3. GENERATE ---
         chat_session = client.chats.create(
             model='gemini-2.0-flash',
             history=chat_history,
             config=types.GenerateContentConfig(
                 tools=[types.Tool(google_search=types.GoogleSearch())],
                 system_instruction=ALFRED_SYSTEM_INSTRUCTIONS,
-                safety_settings=safety_config
+                safety_settings=[
+                    types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="BLOCK_NONE"),
+                    types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="BLOCK_NONE"),
+                    types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_NONE"),
+                    types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="BLOCK_NONE"),
+                ]
             )
         )
         
@@ -196,17 +198,24 @@ def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(
         gen_file_data = None
         gen_filename = None
 
-        if "FILE_CONTENT_START" in reply and requested_type:
-            content = reply.split("FILE_CONTENT_START")[1].split("FILE_CONTENT_END")[0].strip()
-            reply = "I have generated the document for you, Sir."
-            gen_file_data, gen_filename = create_file(content, requested_type)
+        if "FILE_CONTENT_START" in reply:
+            try:
+                content = reply.split("FILE_CONTENT_START")[1].split("FILE_CONTENT_END")[0].strip()
+                reply = "I have generated the document for you, Sir."
+                # Detect type from user command or default to txt
+                req_type = "txt"
+                if "pdf" in request.command.lower(): req_type = "pdf"
+                elif "word" in request.command.lower(): req_type = "docx"
+                elif "presentation" in request.command.lower(): req_type = "pptx"
+                
+                gen_file_data, gen_filename = create_file(content, req_type)
+            except: pass
 
         elif "IMAGE_GEN_REQUEST:" in reply:
             image_prompt = reply.split("IMAGE_GEN_REQUEST:")[1].strip()
             reply = "I am rendering the image, Sir."
             gen_file_data, gen_filename = generate_high_quality_image(image_prompt)
-            if not gen_file_data:
-                reply = "All image engines are currently overloaded. Please try again in a moment."
+            if not gen_file_data: reply = "Visual engine is busy. Please retry."
 
         audio_data = generate_voice(reply) if request.speak else None
 
