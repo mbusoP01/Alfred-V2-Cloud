@@ -34,7 +34,7 @@
         .icon-btn { background: none; border: none; color: var(--accent); font-size: 20px; cursor: pointer; padding: 5px; display: flex; align-items: center; transition: 0.2s; }
         
         #chat-wrapper { flex: 1; overflow-y: auto; padding: 80px 15px 100px 15px; display: flex; flex-direction: column; gap: 15px; scroll-behavior: smooth; }
-        .message { max-width: 88%; padding: 12px 16px; border-radius: 18px; font-size: 15px; line-height: 1.5; word-wrap: break-word; }
+        .message { max-width: 88%; padding: 12px 16px; border-radius: 18px; font-size: 15px; line-height: 1.5; word-wrap: break-word; position: relative; }
         .user { align-self: flex-end; background-color: var(--user-msg); color: #fff; border-bottom-right-radius: 4px; }
         .alfred { align-self: flex-start; background-color: var(--alfred-msg); color: var(--text); border-bottom-left-radius: 4px; }
         
@@ -71,10 +71,21 @@
         .sidebar.open { transform: translateX(0); }
         .sidebar-header { padding: 20px; font-size: 18px; font-weight: bold; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
         .history-list { padding: 10px; overflow-y: auto; flex: 1; }
-        .history-item { padding: 15px; margin-bottom: 8px; background: var(--alfred-msg); border-radius: 8px; font-size: 14px; color: var(--text); cursor: pointer; }
+        
+        /* HISTORY ITEM (UPDATED) */
+        .history-item { padding: 15px; margin-bottom: 8px; background: var(--alfred-msg); border-radius: 8px; font-size: 14px; color: var(--text); cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
+        .history-item span { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .delete-chat { opacity: 0.5; padding: 5px; transition: 0.2s; }
+        .delete-chat:hover { opacity: 1; color: #ff3b30; }
+
         .theme-btn { padding: 15px; margin: 20px; text-align: center; background: var(--alfred-msg); border-radius: 10px; cursor: pointer; font-weight: bold; color: var(--accent); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; gap: 10px; }
         .overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 250; display: none; }
         .overlay.show { display: block; }
+        
+        /* MESSAGE ACTIONS (UPDATED) */
+        .msg-actions { position: absolute; bottom: -22px; right: 0; display: flex; gap: 5px; opacity: 0; transition: 0.2s; pointer-events: none; }
+        .message:hover .msg-actions { opacity: 1; pointer-events: auto; }
+        .action-mini-btn { background: var(--header); border: 1px solid var(--border); color: var(--text); border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; font-size: 10px; cursor: pointer; backdrop-filter: blur(5px); }
         
         #fileInput { display: none; }
         #loginScreen { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: var(--bg); z-index: 9999; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--text); }
@@ -154,7 +165,7 @@
         let chats = JSON.parse(localStorage.getItem('alfred_chats') || "[]");
         let currentChatId = null, currentFileData = null, currentMimeType = null;
         let isVoiceOn = false, isThinkingOn = false;
-        let abortController = null; // Controller for cancellation
+        let abortController = null; 
 
         // --- NETWORK & STATUS HANDLING ---
         function updateNetworkStatus() {
@@ -182,7 +193,7 @@
             statusDiv.innerText = `⚠ SYSTEM ERROR: ${msg}`;
             statusDiv.className = "status-error";
             statusDiv.style.display = 'block';
-            setTimeout(() => { statusDiv.style.display = 'none'; }, 5000); // Hide after 5s
+            setTimeout(() => { statusDiv.style.display = 'none'; }, 5000); 
         }
 
         // --- SFX & UI ---
@@ -213,12 +224,10 @@
         function toggleThemes() { document.getElementById('themeModal').classList.toggle('open'); if(document.getElementById('sidebar').classList.contains('open')) toggleSidebar(); }
         function closeAllMenus() { playClick(); document.getElementById('sidebar').classList.remove('open'); document.getElementById('themeModal').classList.remove('open'); document.getElementById('overlay').classList.remove('show'); }
 
-        // --- STOP / SEND BUTTON LOGIC ---
         function updateButtonState() {
             const text = document.getElementById('userInput').value.trim();
             const btn = document.getElementById('actionBtn');
             
-            // If processing, show STOP button
             if (abortController) {
                 btn.innerHTML = '<i class="fa-solid fa-stop"></i>';
                 btn.classList.add('stop-btn');
@@ -226,18 +235,11 @@
             } else {
                 btn.classList.remove('stop-btn');
             }
-
-            // Normal state
             btn.innerHTML = (text.length > 0 || currentFileData) ? '<i class="fa-solid fa-paper-plane"></i>' : '<i class="fa-solid fa-microphone"></i>';
         }
 
         function handleAction() {
-            // If currently processing, STOP it.
-            if (abortController) {
-                stopGeneration();
-                return;
-            }
-
+            if (abortController) { stopGeneration(); return; }
             const text = document.getElementById('userInput').value.trim();
             if (text.length > 0 || currentFileData) sendMessage(); else startDictation();
         }
@@ -255,18 +257,13 @@
                 errDiv.innerHTML = '<i class="fa-solid fa-ban"></i> Process Terminated by User';
                 wrapper.appendChild(errDiv);
                 
-                // Unlock Input
                 document.getElementById('userInput').disabled = false;
                 document.getElementById('userInput').focus();
                 updateButtonState();
             }
         }
 
-        function startDictation() {
-            playClick();
-            // Simple dictation logic (omitted for brevity, assume works)
-             alert("Voice input active"); 
-        }
+        function startDictation() { playClick(); alert("Voice input active"); }
         function toggleVoiceMode() { isVoiceOn = !isVoiceOn; const btn = document.getElementById('voiceBtn'); isVoiceOn ? btn.classList.add('on') : btn.classList.remove('on'); }
         function toggleThinkingMode() { isThinkingOn = !isThinkingOn; const btn = document.getElementById('thinkBtn'); isThinkingOn ? btn.classList.add('on') : btn.classList.remove('on'); }
 
@@ -278,22 +275,54 @@
             closeAllMenus();
         }
 
+        // --- DELETE CHAT FUNCTION ---
+        function deleteChat(id, event) {
+            event.stopPropagation(); // Prevents clicking the chat itself
+            if(!confirm("Are you sure you want to delete this memory?")) return;
+            
+            playClick();
+            chats = chats.filter(c => c.id !== id);
+            saveChats();
+            
+            if(currentChatId === id) startNewChat();
+            else renderHistory();
+        }
+
         window.copyCode = function(btn) {
             playClick();
             const code = btn.parentElement.querySelector('code').innerText;
             navigator.clipboard.writeText(code).then(() => { const originalText = btn.innerText; btn.innerText = "Copied!"; setTimeout(() => btn.innerText = originalText, 2000); });
         }
+        
+        // Improved Copy Text (Grabs raw text without actions)
         window.copyText = function(text) { navigator.clipboard.writeText(text).then(() => alert("Copied!")); }
         window.editText = function(text) { document.getElementById('userInput').value = text; document.getElementById('userInput').focus(); updateButtonState(); }
 
         function addMessage(text, sender, save = true, audioData = null, fileData = null) {
             const wrapper = document.getElementById('chat-wrapper'); const div = document.createElement('div'); div.className = `message ${sender}`;
+            
+            // Render Content
             div.innerHTML = marked.parse(text);
             div.querySelectorAll('pre code').forEach((block) => hljs.highlightElement(block));
             div.querySelectorAll('pre').forEach((block) => {
                 const btn = document.createElement('button'); btn.className = 'copy-btn'; btn.innerText = 'Copy'; btn.onclick = function() { window.copyCode(this); }; block.appendChild(btn);
             });
             
+            // --- UNIVERSAL COPY BUTTONS ---
+            const actionsDiv = document.createElement('div'); actionsDiv.className = 'msg-actions';
+            
+            // 1. Copy Button (For Everyone)
+            // We use a trick to get text without the buttons themselves
+            let btns = `<div class="action-mini-btn" onclick="copyText(this.closest('.message').innerText)" title="Copy"><i class="fa-regular fa-copy"></i></div>`;
+            
+            // 2. Edit Button (Only for User)
+            if (sender === 'user') {
+                btns += `<div class="action-mini-btn" onclick="editText(this.closest('.message').innerText)" title="Edit"><i class="fa-solid fa-pencil"></i></div>`;
+            }
+            
+            actionsDiv.innerHTML = btns;
+            div.appendChild(actionsDiv);
+
             if (fileData) {
                 if (fileData.name.match(/\.(jpg|jpeg|png|gif)$/i)) {
                     const img = document.createElement('img'); img.src = "data:image/jpeg;base64," + fileData.data; img.className = 'img-preview'; div.appendChild(img);
@@ -329,7 +358,6 @@
             reader.readAsDataURL(file);
         }
 
-        // --- MAIN SEND LOGIC ---
         async function sendMessage() {
             const input = document.getElementById('userInput'); const text = input.value.trim();
             const secretKey = sessionStorage.getItem('alfred_key');
@@ -339,77 +367,55 @@
             playSend();
             if(text) addMessage(text, 'user'); 
             input.value = ''; 
-            input.disabled = true; // Lock input
-            input.placeholder = "Alfred is thinking...";
+            input.disabled = true; input.placeholder = "Alfred is thinking...";
             
-            // INIT ABORT CONTROLLER
             abortController = new AbortController();
-            updateButtonState(); // Changes icon to STOP
+            updateButtonState(); 
             
             const chat = chats.find(c => c.id === currentChatId); const historyContext = chat.messages.slice(-6).map(m => ({ role: m.sender, content: m.text }));
             
-            // DOT ANIMATION
-            const loadingDiv = document.createElement('div'); 
-            loadingDiv.className = 'message alfred'; 
+            const loadingDiv = document.createElement('div'); loadingDiv.className = 'message alfred'; 
             loadingDiv.innerHTML = '<div class="typing-indicator"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>'; 
-            loadingDiv.id = 'loading'; 
-            document.getElementById('chat-wrapper').appendChild(loadingDiv);
+            loadingDiv.id = 'loading'; document.getElementById('chat-wrapper').appendChild(loadingDiv);
 
             try {
                 const res = await fetch(API_URL, {
                     method: 'POST', 
                     headers: { 'Content-Type': 'application/json', 'x-alfred-auth': secretKey },
-                    signal: abortController.signal, // Link abort signal
+                    signal: abortController.signal,
                     body: JSON.stringify({ 
-                        command: text, 
-                        file_data: currentFileData, 
-                        mime_type: currentMimeType, 
-                        speak: isVoiceOn, 
-                        thinking_mode: isThinkingOn, 
-                        history: historyContext 
+                        command: text, file_data: currentFileData, mime_type: currentMimeType, speak: isVoiceOn, thinking_mode: isThinkingOn, history: historyContext 
                     })
                 });
 
                 if (res.status === 401) { throw new Error("401 Access Denied"); }
                 const data = await res.json();
                 
-                // Remove Dots
-                const loading = document.getElementById('loading');
-                if(loading) loading.remove();
-
+                const loading = document.getElementById('loading'); if(loading) loading.remove();
                 playReceive();
                 addMessage(data.response, 'alfred', true, data.audio, data.file);
                 if (data.audio) new Audio("data:audio/mp3;base64," + data.audio).play();
 
             } catch (e) {
-                // Remove Dots
-                const loading = document.getElementById('loading');
-                if(loading) loading.remove();
-
-                if (e.name === 'AbortError') {
-                    // Handled in stopGeneration, do nothing here
-                    console.log("Fetch aborted");
-                } else {
-                    showError(e.message); // Show in red bar
-                    addMessage(`**Error Encountered:** \`${e.message}\``, 'alfred', false);
-                }
+                const loading = document.getElementById('loading'); if(loading) loading.remove();
+                if (e.name === 'AbortError') { console.log("Fetch aborted"); } 
+                else { showError(e.message); addMessage(`**Error Encountered:** \`${e.message}\``, 'alfred', false); }
             }
 
-            // RESET STATE
-            currentFileData = null; currentMimeType = null; 
-            abortController = null;
-            input.disabled = false;
-            input.placeholder = "Command...";
-            input.focus();
-            updateButtonState(); // Changes icon back to MIC/SEND
+            currentFileData = null; currentMimeType = null; abortController = null;
+            input.disabled = false; input.placeholder = "Command..."; input.focus();
+            updateButtonState(); 
         }
         
         function saveChats() { localStorage.setItem('alfred_chats', JSON.stringify(chats)); renderHistory(); }
         function renderHistory() {
             const list = document.getElementById('historyList'); list.innerHTML = '';
             chats.forEach(chat => {
-                const div = document.createElement('div'); div.className = 'history-item'; div.innerText = chat.title;
-                div.onclick = () => { playClick(); loadChat(chat.id); }; list.appendChild(div);
+                const div = document.createElement('div'); div.className = 'history-item'; 
+                // ADDED DELETE ICON
+                div.innerHTML = `<span>${chat.title}</span> <span class="delete-chat" onclick="deleteChat(${chat.id}, event)"><i class="fa-solid fa-trash"></i></span>`;
+                div.onclick = () => { playClick(); loadChat(chat.id); }; 
+                list.appendChild(div);
             });
         }
 
