@@ -5,6 +5,7 @@ import requests
 import re
 import io
 import time
+import pytz
 from google import genai
 from google.genai import types
 from datetime import datetime
@@ -24,9 +25,6 @@ ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY")
 BRIAN_VOICE_ID = "nPczCjzI2devNBz1zQrb"
 HUGGINGFACE_API_KEY = os.environ.get("HUGGINGFACE_API_KEY")
 
-# --- CONFIG ---
-HF_IMAGE_URL = "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-dev"
-
 # --- SYSTEM INSTRUCTIONS ---
 ALFRED_SYSTEM_INSTRUCTIONS = """
 You are Alfred, an elite intelligent assistant.
@@ -36,14 +34,24 @@ PROTOCOL:
 1. Answer the CURRENT query directly.
 2. IF A FILE IS UPLOADED: Analyze it thoroughly.
 
-*** CRITICAL: FILE GENERATION ***
-If user asks to create/generate a file:
-1. Do NOT chat.
-2. Wrap content in: <<<FILE_START>>> content <<<FILE_END>>>.
+*** CRITICAL PROTOCOL: FILE GENERATION ***
+If the user asks to create/generate/make a file (PDF, DOCX, PPTX, TXT):
+1. DO NOT WRITE PYTHON CODE.
+2. DO NOT EXPLAIN HOW TO DO IT.
+3. YOU must write the *actual text content* of the file inside these tags:
+   <<<FILE_START>>>
+   [Put the full text content here]
+   <<<FILE_END>>>
+4. Example:
+   <<<FILE_START>>>
+   Title: My Essay
+   Paragraph 1...
+   <<<FILE_END>>>
 
-*** CRITICAL: IMAGE GENERATION ***
-If asked to generate an image:
+*** CRITICAL PROTOCOL: IMAGE GENERATION ***
+If asked to generate/create/draw an image:
 1. Reply exactly: "IMAGE_GEN_REQUEST: [Detailed Prompt]"
+2. Do not generate a link.
 """
 
 api_key = os.environ.get("GEMINI_API_KEY")
@@ -70,7 +78,7 @@ class UserRequest(BaseModel):
     file_data: Optional[str] = None
     mime_type: Optional[str] = None
     speak: bool = False
-    thinking_mode: bool = False  # <--- NEW TOGGLE
+    thinking_mode: bool = False
     history: List[ChatMessage] = []
 
 # --- IMAGE GEN ---
@@ -99,12 +107,14 @@ def generate_high_quality_image(prompt):
 # --- FILE FACTORY ---
 def create_file(content, file_type):
     buffer = io.BytesIO()
-    filename = f"alfred_doc_{datetime.now().strftime('%H%M%S')}"
+    timestamp = datetime.now().strftime('%H%M%S')
+    filename = f"alfred_doc_{timestamp}"
     try:
         if file_type == "pdf":
             pdf = FPDF()
             pdf.add_page()
             pdf.set_font("Arial", size=12)
+            # Sanitize for PDF
             safe_text = content.encode('latin-1', 'replace').decode('latin-1')
             pdf.multi_cell(0, 10, safe_text)
             return base64.b64encode(pdf.output(dest='S').encode('latin-1')).decode('utf-8'), f"{filename}.pdf"
@@ -122,7 +132,8 @@ def create_file(content, file_type):
             return base64.b64encode(buffer.getvalue()).decode('utf-8'), f"{filename}.pptx"
         elif file_type == "txt":
             return base64.b64encode(content.encode('utf-8')).decode('utf-8'), f"{filename}.txt"
-    except: pass
+    except Exception as e:
+        print(f"File Gen Error: {e}")
     return None, None
 
 # --- VOICE ---
@@ -131,7 +142,7 @@ def generate_voice(text):
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{BRIAN_VOICE_ID}"
     headers = {"Accept": "audio/mpeg", "Content-Type": "application/json", "xi-api-key": ELEVENLABS_API_KEY}
     clean_text = re.sub(r'IMAGE_GEN_REQUEST:.*', 'Generating image.', text)
-    clean_text = re.sub(r'<<<FILE_START>>>.*?<<<FILE_END>>>', 'File generated.', clean_text, flags=re.DOTALL)
+    clean_text = re.sub(r'<<<FILE_START>>>.*?<<<FILE_END>>>', 'I have generated the file.', clean_text, flags=re.DOTALL)
     clean_text = clean_text.replace("*", "").replace("#", "").replace("`", "")
     if not clean_text.strip(): return None
     try:
@@ -142,7 +153,7 @@ def generate_voice(text):
 
 @app.get("/")
 def home():
-    return {"status": "Alfred Online (Thinking Mode Enabled)"}
+    return {"status": "Alfred Online (Protocol Fixed)"}
 
 @app.post("/command")
 def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(None)):
@@ -152,11 +163,16 @@ def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(
     if not client: return {"response": "Sir, connection severed (No API Key)."}
 
     try:
-        now = datetime.now().strftime("%A, %B %d, %Y at %H:%M")
+        sa_timezone = pytz.timezone('Africa/Johannesburg')
+        now = datetime.now(sa_timezone).strftime("%A, %B %d, %Y at %I:%M %p (SAST)")
         
-        # --- MODEL SELECTOR ---
-        # Regular Mode = gemini-2.0-flash (Fast)
-        # Thinking Mode = gemini-2.0-flash-thinking-exp (Smart/Reasoning)
+        requested_type = None
+        lower_cmd = request.command.lower()
+        if "pdf" in lower_cmd: requested_type = "pdf"
+        elif "word" in lower_cmd or "docx" in lower_cmd: requested_type = "docx"
+        elif "presentation" in lower_cmd or "pptx" in lower_cmd: requested_type = "pptx"
+        elif "text file" in lower_cmd or "txt" in lower_cmd: requested_type = "txt"
+
         selected_model = 'gemini-2.0-flash-thinking-exp-01-21' if request.thinking_mode else 'gemini-2.0-flash'
 
         chat_history = []
@@ -164,7 +180,7 @@ def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(
             role = "model" if msg.role == "alfred" else "user"
             chat_history.append(types.Content(role=role, parts=[types.Part.from_text(text=msg.content)]))
 
-        current_parts = [f"[System Time: {now}] {request.command}"]
+        current_parts = [f"[Current SAST Time: {now}] {request.command}"]
         if request.file_data:
             try:
                 file_bytes = base64.b64decode(request.file_data)
@@ -192,15 +208,12 @@ def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(
         gen_file_data = None
         gen_filename = None
 
-        if "FILE_CONTENT_START" in reply:
+        # --- FIX: CHECK FOR CORRECT TAGS ---
+        if "<<<FILE_START>>>" in reply and requested_type:
             try:
-                content = reply.split("FILE_CONTENT_START")[1].split("FILE_CONTENT_END")[0].strip()
-                reply = "I have generated the document for you, Sir."
-                req_type = "txt"
-                if "pdf" in request.command.lower(): req_type = "pdf"
-                elif "word" in request.command.lower(): req_type = "docx"
-                elif "presentation" in request.command.lower(): req_type = "pptx"
-                gen_file_data, gen_filename = create_file(content, req_type)
+                content = reply.split("<<<FILE_START>>>")[1].split("<<<FILE_END>>>")[0].strip()
+                reply = f"I have manufactured the {requested_type.upper()} document for you, Sir."
+                gen_file_data, gen_filename = create_file(content, requested_type)
             except: pass
 
         elif "IMAGE_GEN_REQUEST:" in reply:
