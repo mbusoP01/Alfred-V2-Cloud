@@ -16,37 +16,30 @@ from typing import List, Optional
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- LIGHTWEIGHT LIBRARIES ---
-# Removed: yfinance, textblob, feedparser, numpy, matplotlib (Causes of crash)
-from google import genai
-from google.genai import types
+# --- STABLE LIBRARY ---
+import google.generativeai as genai
 
 # --- KEYS ---
 SERVER_SECRET_KEY = "Mbuso.08@"
-# Ensure GEMINI_API_KEY is set in Render Environment Variables
 api_key = os.environ.get("GEMINI_API_KEY")
 
-# --- CLIENT SETUP ---
-client = None
-if api_key:
-    client = genai.Client(api_key=api_key)
-else:
+if not api_key:
     logger.warning("GEMINI_API_KEY is missing! The server will not function correctly.")
+else:
+    genai.configure(api_key=api_key)
 
 # --- SYSTEM INSTRUCTIONS ---
-# We instruct Alfred to use the 'Google Search' tool for real-time info
 ALFRED_SYSTEM_INSTRUCTIONS = """
 You are Alfred, an elite intelligent assistant.
 User: Mbuso (Sir). Location: South Africa.
 
 *** PRIMARY PROTOCOL ***
 1. Answer the CURRENT query directly and concisely.
-2. **REAL-TIME DATA:** You have access to Google Search. ALWAYS use the Google Search tool to fetch real-time data for:
-   - Stocks / Finance (e.g., "Price of AAPL")
-   - News / Current Events
+2. **REAL-TIME DATA:** You have the Google Search tool enabled. Use it to find real-time info for:
+   - Stocks (e.g., "Price of AAPL")
+   - News
    - Weather
-   - Social Sentiment
-   DO NOT hallucinate data. Search for it.
+   - Sport scores
 
 *** IMAGE PROTOCOL ***
 1. If the user asks for an image generation: Reply "IMAGE_GEN_REQUEST: [Detailed Prompt]"
@@ -74,14 +67,11 @@ class UserRequest(BaseModel):
     command: str
     file_data: Optional[str] = None
     mime_type: Optional[str] = None
-    speak: bool = False
-    thinking_mode: bool = False
     history: List[ChatMessage] = []
 
 # --- HELPER FUNCTIONS ---
 
 def fetch_and_encode_image(url):
-    """Downloads an image from a URL and converts to Base64."""
     try:
         from PIL import Image
         headers = {'User-Agent': 'Mozilla/5.0'}
@@ -99,7 +89,6 @@ def fetch_and_encode_image(url):
         return None, None, None
 
 def create_file(content, file_type):
-    """Generates PDF, DOCX, or TXT files. Imports are lazy-loaded to save RAM."""
     buffer = io.BytesIO()
     timestamp = datetime.now().strftime('%H%M%S')
     filename = f"alfred_doc_{timestamp}"
@@ -109,7 +98,6 @@ def create_file(content, file_type):
             pdf = FPDF()
             pdf.add_page()
             pdf.set_font("Helvetica", size=12)
-            # Handle encoding for PDF
             clean_content = content.encode('latin-1', 'replace').decode('latin-1')
             pdf.multi_cell(0, 7, clean_content)
             return base64.b64encode(pdf.output(dest='S').encode('latin-1')).decode('utf-8'), f"{filename}.pdf"
@@ -126,60 +114,52 @@ def create_file(content, file_type):
         return None, None
     return None, None
 
-# --- HEALTH CHECK ---
-@app.get("/")
-def health_check():
-    return {"status": "alive", "mode": "lightweight"}
-
 # --- MAIN ENDPOINT ---
 @app.post("/command")
 async def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(None)):
     if x_alfred_auth != SERVER_SECRET_KEY:
         raise HTTPException(status_code=401, detail="Unauthorized")
     
-    if not client:
-        return {"response": "Error: GEMINI_API_KEY not configured on server."}
-
     try:
-        # 1. Prepare History
-        chat_history = []
+        # 1. Prepare History (Stable SDK format)
+        history_gemini = []
         for m in request.history:
             role = "user" if m.role == "user" else "model"
-            chat_history.append(types.Content(role=role, parts=[types.Part.from_text(text=m.content)]))
+            history_gemini.append({"role": role, "parts": [m.content]})
 
-        # 2. Configure Model with Google Search Tool (Replaces yfinance/feedparser)
-        model_id = 'gemini-2.0-flash-thinking-exp-01-21'
+        # 2. Configure Model (Using Gemini 1.5 Flash which is very stable with Tools)
+        # We enable the built-in Google Search tool
+        tools = [
+            {"google_search": {}} 
+        ]
         
-        # 3. Generate Response with Retry Logic
-        response_text = "I am having trouble connecting to my brain."
+        model = genai.GenerativeModel(
+            model_name='gemini-1.5-flash',
+            tools=tools,
+            system_instruction=ALFRED_SYSTEM_INSTRUCTIONS
+        )
         
+        # 3. Chat Session
+        chat = model.start_chat(history=history_gemini)
+        
+        # 4. Generate Response (Retry Loop)
+        response_text = "I am having trouble connecting."
         for attempt in range(3):
             try:
-                chat = client.chats.create(
-                    model=model_id,
-                    history=chat_history,
-                    config=types.GenerateContentConfig(
-                        tools=[types.Tool(google_search=types.GoogleSearch())],
-                        system_instruction=ALFRED_SYSTEM_INSTRUCTIONS
-                    )
-                )
-                
-                # We simply send the command. The model decides if it needs to Search Google.
-                result = chat.send_message(request.command)
-                response_text = result.text
+                response = chat.send_message(request.command)
+                response_text = response.text
                 break
             except Exception as e:
                 if "429" in str(e): # Rate Limit
                     time.sleep(2)
                     continue
                 logger.error(f"Gemini API Error: {e}")
-                response_text = f"Error processing request: {str(e)}"
+                response_text = f"Error: {str(e)}"
                 break
 
-        # 4. Handle Actions (Image/File)
+        # 5. Handle Actions (Image/File)
         gen_file_data, gen_filename, gen_mime = None, None, None
 
-        # Image Fetching Logic
         img_match = re.search(r'<<<FETCH_IMAGE>>>(.*?)<<<FETCH_IMAGE>>>', response_text, re.DOTALL)
         if img_match:
             url = img_match.group(1).strip()
@@ -188,23 +168,19 @@ async def process_command(request: UserRequest, x_alfred_auth: Optional[str] = H
             if b64: 
                 gen_file_data, gen_filename, gen_mime = b64, fname, mime
 
-        # File Generation Logic
         elif "<<<FILE_START>>>" in response_text:
             try:
                 parts = response_text.split("<<<FILE_START>>>")
                 pre_text = parts[0]
                 content = parts[1].split("<<<FILE_END>>>")[0].strip()
-                
                 ftype = "txt"
                 if "pdf" in request.command.lower(): ftype = "pdf"
-                elif "word" in request.command.lower() or "docx" in request.command.lower(): ftype = "docx"
-                
+                elif "word" in request.command.lower(): ftype = "docx"
                 gen_file_data, gen_filename = create_file(content, ftype)
                 if gen_file_data:
                     gen_mime = "application/pdf" if ftype == "pdf" else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                     response_text = pre_text + f"\n[Attached: {gen_filename}]"
-            except Exception as e:
-                logger.error(f"File parsing error: {e}")
+            except: pass
 
         return {
             "response": response_text,
@@ -212,5 +188,4 @@ async def process_command(request: UserRequest, x_alfred_auth: Optional[str] = H
         }
 
     except Exception as e:
-        logger.error(f"Critical Server Error: {e}")
         return {"response": f"Critical Server Error: {str(e)}"}
