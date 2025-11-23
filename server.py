@@ -6,6 +6,10 @@ import re
 import io
 import time
 import pytz
+import numpy as np
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 from google import genai
 from google.genai import types
 from datetime import datetime
@@ -25,33 +29,24 @@ ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY")
 BRIAN_VOICE_ID = "nPczCjzI2devNBz1zQrb"
 HUGGINGFACE_API_KEY = os.environ.get("HUGGINGFACE_API_KEY")
 
-# --- SYSTEM INSTRUCTIONS ---
 ALFRED_SYSTEM_INSTRUCTIONS = """
 You are Alfred, an elite intelligent assistant.
 User: Mbuso (Sir). Location: South Africa.
 
 PROTOCOL:
 1. Answer the CURRENT query directly.
-2. IF A FILE IS UPLOADED: Analyze it thoroughly.
+2. IF A VIDEO/IMAGE IS UPLOADED: Analyze it thoroughly. For video, describe the action, sound (if applicable), and key events.
+3. IF A FILE IS UPLOADED: Analyze it thoroughly.
 
-*** CRITICAL PROTOCOL: FILE GENERATION ***
-If the user asks to create/generate/make a file (PDF, DOCX, PPTX, TXT):
-1. DO NOT WRITE PYTHON CODE.
-2. DO NOT EXPLAIN HOW TO DO IT.
-3. YOU must write the *actual text content* of the file inside these tags:
-   <<<FILE_START>>>
-   [Put the full text content here]
-   <<<FILE_END>>>
-4. Example:
-   <<<FILE_START>>>
-   Title: My Essay
-   Paragraph 1...
-   <<<FILE_END>>>
+*** CRITICAL: DATA VISUALIZATION ***
+If user asks to "plot", "graph", or "chart" data:
+1. Extract data and write Python code using 'matplotlib'.
+2. WRAP CODE IN: <<<CHART_START>>> code <<<CHART_END>>>.
+3. Save plot to 'chart.png'.
 
-*** CRITICAL PROTOCOL: IMAGE GENERATION ***
-If asked to generate/create/draw an image:
-1. Reply exactly: "IMAGE_GEN_REQUEST: [Detailed Prompt]"
-2. Do not generate a link.
+*** CRITICAL: FILE/IMAGE GEN ***
+- Files: Wrap content in <<<FILE_START>>> ... <<<FILE_END>>>.
+- Images: Reply "IMAGE_GEN_REQUEST: [Prompt]"
 """
 
 api_key = os.environ.get("GEMINI_API_KEY")
@@ -81,6 +76,19 @@ class UserRequest(BaseModel):
     thinking_mode: bool = False
     history: List[ChatMessage] = []
 
+# --- CHART ENGINE ---
+def execute_chart_code(code):
+    try:
+        local_env = {"plt": plt, "np": np}
+        exec(code, {}, local_env)
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', bbox_inches='tight')
+        plt.close()
+        buf.seek(0)
+        return base64.b64encode(buf.getvalue()).decode('utf-8'), "alfred_chart.png"
+    except Exception as e:
+        return None, None
+
 # --- IMAGE GEN ---
 def generate_high_quality_image(prompt):
     if not HUGGINGFACE_API_KEY: return None, None
@@ -107,14 +115,12 @@ def generate_high_quality_image(prompt):
 # --- FILE FACTORY ---
 def create_file(content, file_type):
     buffer = io.BytesIO()
-    timestamp = datetime.now().strftime('%H%M%S')
-    filename = f"alfred_doc_{timestamp}"
+    filename = f"alfred_doc_{datetime.now().strftime('%H%M%S')}"
     try:
         if file_type == "pdf":
             pdf = FPDF()
             pdf.add_page()
             pdf.set_font("Arial", size=12)
-            # Sanitize for PDF
             safe_text = content.encode('latin-1', 'replace').decode('latin-1')
             pdf.multi_cell(0, 10, safe_text)
             return base64.b64encode(pdf.output(dest='S').encode('latin-1')).decode('utf-8'), f"{filename}.pdf"
@@ -132,8 +138,7 @@ def create_file(content, file_type):
             return base64.b64encode(buffer.getvalue()).decode('utf-8'), f"{filename}.pptx"
         elif file_type == "txt":
             return base64.b64encode(content.encode('utf-8')).decode('utf-8'), f"{filename}.txt"
-    except Exception as e:
-        print(f"File Gen Error: {e}")
+    except: pass
     return None, None
 
 # --- VOICE ---
@@ -141,8 +146,8 @@ def generate_voice(text):
     if not ELEVENLABS_API_KEY: return None
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{BRIAN_VOICE_ID}"
     headers = {"Accept": "audio/mpeg", "Content-Type": "application/json", "xi-api-key": ELEVENLABS_API_KEY}
-    clean_text = re.sub(r'IMAGE_GEN_REQUEST:.*', 'Generating image.', text)
-    clean_text = re.sub(r'<<<FILE_START>>>.*?<<<FILE_END>>>', 'I have generated the file.', clean_text, flags=re.DOTALL)
+    clean_text = re.sub(r'IMAGE_GEN_REQUEST:.*', 'Generating visual.', text)
+    clean_text = re.sub(r'<<<.*?>>>', 'Visual data generated.', clean_text, flags=re.DOTALL)
     clean_text = clean_text.replace("*", "").replace("#", "").replace("`", "")
     if not clean_text.strip(): return None
     try:
@@ -153,7 +158,7 @@ def generate_voice(text):
 
 @app.get("/")
 def home():
-    return {"status": "Alfred Online (Protocol Fixed)"}
+    return {"status": "Alfred Online (Video Analysis Enabled)"}
 
 @app.post("/command")
 def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(None)):
@@ -181,9 +186,12 @@ def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(
             chat_history.append(types.Content(role=role, parts=[types.Part.from_text(text=msg.content)]))
 
         current_parts = [f"[Current SAST Time: {now}] {request.command}"]
+        
+        # --- FILE / VIDEO / IMAGE HANDLING ---
         if request.file_data:
             try:
                 file_bytes = base64.b64decode(request.file_data)
+                # Simply pass the mime type provided by the frontend (e.g. video/mp4)
                 current_parts.append(types.Part.from_bytes(data=file_bytes, mime_type=request.mime_type))
             except: pass
 
@@ -208,7 +216,7 @@ def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(
         gen_file_data = None
         gen_filename = None
 
-        # --- FIX: CHECK FOR CORRECT TAGS ---
+        # 1. FILE GEN
         if "<<<FILE_START>>>" in reply and requested_type:
             try:
                 content = reply.split("<<<FILE_START>>>")[1].split("<<<FILE_END>>>")[0].strip()
@@ -216,11 +224,20 @@ def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(
                 gen_file_data, gen_filename = create_file(content, requested_type)
             except: pass
 
+        # 2. IMAGE GEN
         elif "IMAGE_GEN_REQUEST:" in reply:
             image_prompt = reply.split("IMAGE_GEN_REQUEST:")[1].strip()
             reply = "I am rendering the image, Sir."
             gen_file_data, gen_filename = generate_high_quality_image(image_prompt)
             if not gen_file_data: reply = "Visual engine is busy. Please retry."
+
+        # 3. CHART GEN
+        elif "<<<CHART_START>>>" in reply:
+            try:
+                code = reply.split("<<<CHART_START>>>")[1].split("<<<CHART_END>>>")[0].strip()
+                reply = "I have visualized the data for you, Sir."
+                gen_file_data, gen_filename = execute_chart_code(code)
+            except: pass
 
         audio_data = generate_voice(reply) if request.speak else None
 
