@@ -7,6 +7,7 @@ import io
 import time
 import pytz
 import logging
+import asyncio
 from datetime import datetime
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -177,13 +178,26 @@ def create_file(content, file_type):
 # --- HEALTH CHECK ---
 @app.get("/")
 def health_check():
+    logger.info("Health check ping received.")
     return {"status": "alive"}
+
+# --- GLOBAL RATE LIMITER ---
+last_request_time = 0
 
 # --- MAIN ENDPOINT ---
 @app.post("/command")
-def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(None)):
+async def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(None)):
+    global last_request_time
     if x_alfred_auth != SERVER_SECRET_KEY: raise HTTPException(status_code=401)
     if not client: return {"response": "API Key missing."}
+
+    # --- RATE LIMITER ---
+    # Force a 2-second gap between requests to prevent spamming Google
+    current_time = time.time()
+    time_since_last = current_time - last_request_time
+    if time_since_last < 2:
+        await asyncio.sleep(2 - time_since_last)
+    last_request_time = time.time()
 
     try:
         # Context & Data
@@ -208,7 +222,7 @@ def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(
         
         # --- SAFE RETRY LOOP (Handles 429 Too Many Requests) ---
         response = None
-        for attempt in range(5): # Increased retries
+        for attempt in range(6): # Increased retries to 6
             try:
                 chat = client.chats.create(
                     model='gemini-2.0-flash-thinking-exp-01-21', 
@@ -222,13 +236,14 @@ def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(
                 break
             except Exception as e:
                 if "429" in str(e): # Rate limit hit
-                    logger.warning(f"Rate limit 429 hit. Sleeping for {2**attempt} seconds...")
-                    time.sleep(2**attempt) # Exponential backoff (1s, 2s, 4s, 8s)
+                    wait_time = 2**attempt # 1, 2, 4, 8, 16, 32 seconds
+                    logger.warning(f"Rate limit 429 hit. Sleeping for {wait_time} seconds...")
+                    time.sleep(wait_time) 
                 else:
                     logger.error(f"API Error: {e}")
                     time.sleep(1)
             
-        reply = response.text if response else "I am currently overloaded (Rate Limit). Please try again in a moment."
+        reply = response.text if response else "I am currently overloaded (Rate Limit). Please wait 30 seconds and try again."
         gen_file_data, gen_filename, gen_mime = None, None, None
 
         # Handlers
