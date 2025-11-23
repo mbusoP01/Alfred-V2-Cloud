@@ -10,6 +10,7 @@
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
     
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22 fill=%22white%22>⚚</text></svg>">
 
@@ -42,7 +43,7 @@
             position: fixed; top: 0; left: 0; right: 0; z-index: 100;
         }
         .header-title { font-weight: 700; font-size: 16px; letter-spacing: 1px; }
-        .icon-btn { background: none; border: none; color: var(--accent); font-size: 24px; cursor: pointer; padding: 5px; }
+        .icon-btn { background: none; border: none; color: var(--accent); font-size: 24px; cursor: pointer; padding: 5px; display: flex; align-items: center; }
 
         /* CHAT AREA */
         #chat-wrapper { 
@@ -53,9 +54,12 @@
         .user { align-self: flex-end; background-color: var(--user-msg); color: #fff; border-bottom-right-radius: 4px; }
         .alfred { align-self: flex-start; background-color: var(--alfred-msg); color: var(--text); border-bottom-left-radius: 4px; }
         
-        .message pre { background: rgba(0,0,0,0.3); padding: 10px; border-radius: 8px; overflow-x: auto; margin: 10px 0; border: 1px solid var(--border); }
+        /* CODE BLOCKS */
+        .message pre { background: rgba(0,0,0,0.3); padding: 35px 10px 10px 10px; border-radius: 8px; overflow-x: auto; margin: 10px 0; border: 1px solid var(--border); position: relative; }
         .message code { font-family: 'Menlo', monospace; font-size: 13px; }
-        
+        .copy-btn { position: absolute; top: 5px; right: 5px; background: rgba(255,255,255,0.1); border: 1px solid var(--border); color: var(--text); padding: 4px 8px; border-radius: 4px; font-size: 12px; cursor: pointer; transition: 0.2s; }
+        .copy-btn:hover { background: var(--accent); color: white; }
+
         /* INPUT AREA */
         .input-area {
             position: fixed; bottom: 0; left: 0; right: 0; width: 100%; padding: 10px 15px;
@@ -71,8 +75,9 @@
         .action-main-btn {
             background: var(--accent); border: none; border-radius: 50%; width: 40px; height: 40px;
             color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer;
-            font-size: 18px; flex-shrink: 0;
+            flex-shrink: 0;
         }
+        .action-main-btn .material-icons { font-size: 20px; }
         .mic-active { background-color: #ff3b30; animation: pulse 1.5s infinite; }
         @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.6; } 100% { opacity: 1; } }
         
@@ -95,19 +100,18 @@
         .theme-btn {
             padding: 15px; margin: 20px; text-align: center; background: var(--alfred-msg); 
             border-radius: 10px; cursor: pointer; font-weight: bold; color: var(--accent);
-            border: 1px solid var(--border);
+            border: 1px solid var(--border); display: flex; align-items: center; justify-content: center;
         }
         .overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 250; display: none; }
         .overlay.show { display: block; }
         #fileInput { display: none; }
         
-        /* LOGIN SCREEN (UPDATED FOR AUTOFILL) */
+        /* LOGIN SCREEN */
         #loginScreen {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
             background: var(--bg); z-index: 9999; display: flex; flex-direction: column;
             align-items: center; justify-content: center; color: var(--text);
         }
-        /* Wrapper for inputs to look clean */
         .login-form { display: flex; flex-direction: column; gap: 15px; width: 280px; }
         .login-input {
             padding: 15px; border-radius: 10px; border: 1px solid var(--border);
@@ -138,7 +142,6 @@
     <div id="loginScreen">
         <div style="font-size: 50px; margin-bottom: 20px;">⚚</div>
         <h3 style="margin-bottom: 20px;">SYSTEM LOCKED</h3>
-        
         <form class="login-form" onsubmit="event.preventDefault(); checkLogin();">
             <input type="text" id="usernameInput" class="login-input" placeholder="Username" autocomplete="username">
             <input type="password" id="passwordInput" class="login-input" placeholder="Password" autocomplete="current-password">
@@ -147,19 +150,21 @@
     </div>
 
     <div class="header">
-        <button class="icon-btn" onclick="toggleSidebar()">☰</button>
+        <button class="icon-btn" onclick="toggleSidebar()"><span class="material-icons">menu</span></button>
         <div class="header-title">⚚ ALFRED_ΣYSTEM ⚚</div>
-        <button class="icon-btn" onclick="startNewChat()">+</button>
+        <button class="icon-btn" onclick="startNewChat()"><span class="material-icons">add</span></button>
     </div>
 
     <div class="overlay" id="overlay" onclick="closeAllMenus()"></div>
     <div class="sidebar" id="sidebar">
         <div class="sidebar-header">
             <span>Memory Banks</span>
-            <span onclick="toggleSidebar()">✕</span>
+            <span onclick="toggleSidebar()" style="cursor:pointer;"><span class="material-icons">close</span></span>
         </div>
         <div class="history-list" id="historyList"></div>
-        <div class="theme-btn" onclick="toggleThemes()">🎨 Change Theme</div>
+        <div class="theme-btn" onclick="toggleThemes()">
+            <span class="material-icons" style="margin-right: 8px;">palette</span> Change Theme
+        </div>
     </div>
 
     <div id="themeModal">
@@ -175,17 +180,17 @@
     <div id="chat-wrapper"></div>
 
     <div class="input-area">
-        <button class="icon-btn" onclick="document.getElementById('fileInput').click()">+</button>
+        <button class="icon-btn" onclick="document.getElementById('fileInput').click()"><span class="material-icons">add_photo_alternate</span></button>
         <input type="file" id="fileInput" accept="image/*" onchange="handleImage(this)">
         <button class="voice-toggle" id="voiceBtn" onclick="toggleVoiceMode()">၊၊||၊</button>
         <input type="text" id="userInput" placeholder="Command..." autocomplete="off" oninput="updateButtonState()">
-        <button class="action-main-btn" id="actionBtn" onclick="handleAction()">🎙️</button>
+        <button class="action-main-btn" id="actionBtn" onclick="handleAction()">
+            <span class="material-icons">keyboard</span>
+        </button>
     </div>
 
     <script>
         const API_URL = "https://alfred-v2-cloud.onrender.com/command";
-        
-        // --- SECURITY CREDENTIALS ---
         const MY_USERNAME = "Mbuso_Admin";
         const MY_PASSWORD = "Mbuso.08@";
         
@@ -194,9 +199,7 @@
         let currentImage = null;
         let isVoiceOn = false;
         
-        // --- AUTH LOGIC ---
         function checkAuth() {
-            // Session storage clears when browser closes (more secure)
             if (sessionStorage.getItem('alfred_auth') === 'true') {
                 document.getElementById('loginScreen').style.display = 'none';
             }
@@ -204,18 +207,15 @@
         function checkLogin() {
             const user = document.getElementById('usernameInput').value;
             const pass = document.getElementById('passwordInput').value;
-            
             if (user === MY_USERNAME && pass === MY_PASSWORD) {
                 sessionStorage.setItem('alfred_auth', 'true');
                 document.getElementById('loginScreen').style.display = 'none';
             } else {
-                alert("Access Denied. Invalid Credentials.");
-                document.getElementById('passwordInput').value = "";
+                alert("Access Denied.");
             }
         }
         checkAuth(); 
 
-        // --- THEME LOGIC ---
         function loadTheme() {
             const savedTheme = localStorage.getItem('alfred_theme');
             if (savedTheme) document.body.setAttribute('data-theme', savedTheme);
@@ -232,7 +232,6 @@
         }
         loadTheme();
 
-        // --- SPEECH ---
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         let recognition = null;
         if (SpeechRecognition) {
@@ -243,7 +242,10 @@
                 document.getElementById('userInput').value = event.results[0][0].transcript;
                 updateButtonState();
             };
-            recognition.onend = () => document.getElementById('actionBtn').classList.remove('mic-active');
+            recognition.onend = () => {
+                document.getElementById('actionBtn').classList.remove('mic-active');
+                updateButtonState();
+            };
         }
 
         function init() {
@@ -266,10 +268,16 @@
             document.getElementById('themeModal').classList.remove('open');
             document.getElementById('overlay').classList.remove('show');
         }
+
+        // --- UPDATED BUTTON STATE LOGIC FOR ICONS ---
         function updateButtonState() {
             const text = document.getElementById('userInput').value.trim();
             const btn = document.getElementById('actionBtn');
-            btn.innerText = (text.length > 0 || currentImage) ? "➤" : "🎙️";
+            if (text.length > 0 || currentImage) {
+                btn.innerHTML = '<span class="material-icons">send</span>';
+            } else {
+                btn.innerHTML = '<span class="material-icons">keyboard</span>';
+            }
         }
         function handleAction() {
             const text = document.getElementById('userInput').value.trim();
@@ -279,6 +287,8 @@
         function startDictation() {
             if (recognition) {
                 document.getElementById('actionBtn').classList.add('mic-active');
+                // Show Mic Icon while listening
+                document.getElementById('actionBtn').innerHTML = '<span class="material-icons">mic</span>';
                 recognition.start();
             } else {
                 alert("Mic not supported.");
@@ -309,13 +319,32 @@
             }
             closeAllMenus();
         }
+        
+        window.copyCode = function(btn) {
+            const code = btn.parentElement.querySelector('code').innerText;
+            navigator.clipboard.writeText(code).then(() => {
+                const originalText = btn.innerText;
+                btn.innerText = "Copied!";
+                setTimeout(() => btn.innerText = originalText, 2000);
+            });
+        }
+
         function addMessage(text, sender, save = true, audioData = null) {
             const wrapper = document.getElementById('chat-wrapper');
             const div = document.createElement('div');
             div.className = `message ${sender}`;
             
             div.innerHTML = marked.parse(text);
-            div.querySelectorAll('pre code').forEach((block) => hljs.highlightElement(block));
+            
+            div.querySelectorAll('pre').forEach((block) => {
+                const btn = document.createElement('button');
+                btn.className = 'copy-btn';
+                btn.innerText = 'Copy';
+                btn.onclick = function() { window.copyCode(this); };
+                block.appendChild(btn);
+                const code = block.querySelector('code');
+                if(code) hljs.highlightElement(code);
+            });
 
             if (audioData) {
                 const audio = document.createElement('audio');
