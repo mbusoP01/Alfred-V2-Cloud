@@ -16,7 +16,11 @@
 
     <style>
         /* --- THEME VARIABLES --- */
-        :root { --bg: #000000; --sidebar: #111111; --header: rgba(28,28,30,0.95); --user-msg: #0A84FF; --alfred-msg: #262629; --text: #FFFFFF; --accent: #0A84FF; --border: #333; }
+        :root {
+            --bg: #000000; --sidebar: #111111; --header: rgba(28,28,30,0.95);
+            --user-msg: #0A84FF; --alfred-msg: #262629; --text: #FFFFFF;
+            --accent: #0A84FF; --border: #333;
+        }
         [data-theme="matrix"] { --bg:#0d1117; --sidebar:#010409; --header:rgba(13,17,23,0.95); --user-msg:#238636; --alfred-msg:#161b22; --text:#c9d1d9; --accent:#2ea043; --border:#30363d; }
         [data-theme="cloud"] { --bg:#F2F2F7; --sidebar:#FFFFFF; --header:rgba(255,255,255,0.95); --user-msg:#007AFF; --alfred-msg:#E5E5EA; --text:#000000; --accent:#007AFF; --border:#C6C6C8; }
         [data-theme="obsidian"] { --bg:#1c1c1e; --sidebar:#2c2c2e; --header:rgba(44,44,46,0.95); --user-msg:#5E5CE6; --alfred-msg:#3a3a3c; --text:#ffffff; --accent:#5E5CE6; --border:#48484a; }
@@ -27,16 +31,15 @@
         
         .header { display: flex; align-items: center; justify-content: space-between; padding: 15px 20px; background: var(--header); backdrop-filter: blur(20px); border-bottom: 1px solid var(--border); position: fixed; top: 0; left: 0; right: 0; z-index: 100; }
         .header-title { font-weight: 700; font-size: 16px; letter-spacing: 1px; }
-        .icon-btn { background: none; border: none; color: var(--accent); font-size: 20px; cursor: pointer; padding: 5px; display: flex; align-items: center; }
+        .icon-btn { background: none; border: none; color: var(--accent); font-size: 20px; cursor: pointer; padding: 5px; display: flex; align-items: center; transition: 0.2s; }
+        .icon-btn:active { transform: scale(0.9); opacity: 0.7; }
 
         #chat-wrapper { flex: 1; overflow-y: auto; padding: 80px 15px 100px 15px; display: flex; flex-direction: column; gap: 15px; scroll-behavior: smooth; }
         .message { max-width: 88%; padding: 12px 16px; border-radius: 18px; font-size: 15px; line-height: 1.5; word-wrap: break-word; }
         .user { align-self: flex-end; background-color: var(--user-msg); color: #fff; border-bottom-right-radius: 4px; }
         .alfred { align-self: flex-start; background-color: var(--alfred-msg); color: var(--text); border-bottom-left-radius: 4px; }
         
-        /* --- FIX: RESPONSIVE IMAGES --- */
         .message img { max-width: 100%; height: auto; border-radius: 10px; margin: 10px 0; display: block; }
-        
         .message pre { background: rgba(0,0,0,0.3); padding: 35px 10px 10px 10px; border-radius: 8px; overflow-x: auto; margin: 10px 0; border: 1px solid var(--border); position: relative; }
         .message code { font-family: 'Menlo', monospace; font-size: 13px; }
         .copy-btn { position: absolute; top: 5px; right: 5px; background: rgba(255,255,255,0.1); border: 1px solid var(--border); color: var(--text); padding: 4px 8px; border-radius: 4px; font-size: 12px; cursor: pointer; transition: 0.2s; }
@@ -45,6 +48,7 @@
         .input-area { position: fixed; bottom: 0; left: 0; right: 0; width: 100%; padding: 10px 15px; padding-bottom: max(10px, env(safe-area-inset-bottom)); background: var(--header); backdrop-filter: blur(20px); display: flex; align-items: center; gap: 10px; border-top: 1px solid var(--border); z-index: 200; }
         input[type="text"] { flex: 1; min-width: 0; background: var(--alfred-msg); border: none; border-radius: 20px; padding: 12px 15px; color: var(--text); font-size: 16px; outline: none; }
         .action-main-btn { background: var(--accent); border: none; border-radius: 50%; width: 40px; height: 40px; color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; transition: 0.2s; }
+        .action-main-btn:active { transform: scale(0.9); }
         .action-main-btn i { font-size: 18px; }
         .mic-active { background-color: #ff3b30; animation: pulse 1.5s infinite; }
         @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.6; } 100% { opacity: 1; } }
@@ -77,6 +81,10 @@
 </head>
 <body>
 
+    <audio id="sfx-click" src="click.mp3" preload="auto"></audio>
+    <audio id="sfx-send" src="send.mp3" preload="auto"></audio>
+    <audio id="sfx-receive" src="receive.mp3" preload="auto"></audio>
+
     <div id="loginScreen">
         <div style="font-size: 50px; margin-bottom: 20px;">⚚</div>
         <h3 style="margin-bottom: 20px;">SYSTEM LOCKED</h3>
@@ -88,16 +96,21 @@
     </div>
 
     <div class="header">
-        <button class="icon-btn" onclick="toggleSidebar()"><i class="fa-solid fa-bars"></i></button>
+        <button class="icon-btn" onclick="playClick(); toggleSidebar()"><i class="fa-solid fa-bars"></i></button>
         <div class="header-title">⚚ ALFRED_ΣYSTEM ⚚</div>
-        <button class="icon-btn" onclick="startNewChat()"><i class="fa-solid fa-plus"></i></button>
+        <button class="icon-btn" onclick="playClick(); startNewChat()"><i class="fa-solid fa-plus"></i></button>
     </div>
 
     <div class="overlay" id="overlay" onclick="closeAllMenus()"></div>
     <div class="sidebar" id="sidebar">
-        <div class="sidebar-header"><span>Memory Banks</span><span onclick="toggleSidebar()" style="cursor:pointer;"><i class="fa-solid fa-times"></i></span></div>
+        <div class="sidebar-header">
+            <span>Memory Banks</span>
+            <span onclick="playClick(); toggleSidebar()" style="cursor:pointer;"><i class="fa-solid fa-times"></i></span>
+        </div>
         <div class="history-list" id="historyList"></div>
-        <div class="theme-btn" onclick="toggleThemes()"><i class="fa-solid fa-palette"></i> Change Theme</div>
+        <div class="theme-btn" onclick="playClick(); toggleThemes()">
+            <i class="fa-solid fa-palette"></i> Change Theme
+        </div>
     </div>
 
     <div id="themeModal">
@@ -113,11 +126,16 @@
     <div id="chat-wrapper"></div>
 
     <div class="input-area">
-        <button class="icon-btn" onclick="document.getElementById('fileInput').click()"><i class="fa-solid fa-paperclip"></i></button>
+        <button class="icon-btn" onclick="playClick(); document.getElementById('fileInput').click()"><i class="fa-solid fa-paperclip"></i></button>
         <input type="file" id="fileInput" accept="image/*, application/pdf, text/plain" onchange="handleFile(this)">
-        <button class="voice-toggle" id="voiceBtn" onclick="toggleVoiceMode()">၊၊||၊</button>
+        
+        <button class="voice-toggle" id="voiceBtn" onclick="playClick(); toggleVoiceMode()">၊၊||၊</button>
+        
         <input type="text" id="userInput" placeholder="Command..." autocomplete="off" oninput="updateButtonState()">
-        <button class="action-main-btn" id="actionBtn" onclick="handleAction()"><i class="fa-solid fa-microphone"></i></button>
+        
+        <button class="action-main-btn" id="actionBtn" onclick="handleAction()">
+            <i class="fa-solid fa-microphone"></i>
+        </button>
     </div>
 
     <script>
@@ -131,18 +149,51 @@
         let currentMimeType = null;
         let isVoiceOn = false;
         
-        function checkAuth() { if (sessionStorage.getItem('alfred_auth') === 'true') document.getElementById('loginScreen').style.display = 'none'; }
+        // --- SOUND SYSTEM ---
+        function playClick() {
+            const sfx = document.getElementById('sfx-click');
+            if(sfx) { sfx.currentTime = 0; sfx.play().catch(e=>{}); }
+        }
+        function playSend() {
+            const sfx = document.getElementById('sfx-send');
+            if(sfx) { sfx.currentTime = 0; sfx.play().catch(e=>{}); }
+        }
+        function playReceive() {
+            const sfx = document.getElementById('sfx-receive');
+            if(sfx) { sfx.currentTime = 0; sfx.play().catch(e=>{}); }
+        }
+
+        function checkAuth() {
+            if (sessionStorage.getItem('alfred_auth') === 'true') {
+                document.getElementById('loginScreen').style.display = 'none';
+            }
+        }
         function checkLogin() {
-            if (document.getElementById('usernameInput').value === MY_USERNAME && document.getElementById('passwordInput').value === MY_PASSWORD) {
-                sessionStorage.setItem('alfred_auth', 'true'); document.getElementById('loginScreen').style.display = 'none';
-            } else { alert("Access Denied."); }
+            const user = document.getElementById('usernameInput').value;
+            const pass = document.getElementById('passwordInput').value;
+            if (user === MY_USERNAME && pass === MY_PASSWORD) {
+                playClick();
+                sessionStorage.setItem('alfred_auth', 'true');
+                document.getElementById('loginScreen').style.display = 'none';
+            } else {
+                alert("Access Denied.");
+            }
         }
         checkAuth(); 
 
-        function loadTheme() { const savedTheme = localStorage.getItem('alfred_theme'); if (savedTheme) document.body.setAttribute('data-theme', savedTheme); }
+        function loadTheme() {
+            const savedTheme = localStorage.getItem('alfred_theme');
+            if (savedTheme) document.body.setAttribute('data-theme', savedTheme);
+        }
         function setTheme(theme) {
-            if (theme === 'default') { document.body.removeAttribute('data-theme'); localStorage.removeItem('alfred_theme'); } 
-            else { document.body.setAttribute('data-theme', theme); localStorage.setItem('alfred_theme', theme); }
+            playClick();
+            if (theme === 'default') {
+                document.body.removeAttribute('data-theme');
+                localStorage.removeItem('alfred_theme');
+            } else {
+                document.body.setAttribute('data-theme', theme);
+                localStorage.setItem('alfred_theme', theme);
+            }
             toggleThemes(); 
         }
         loadTheme();
@@ -153,89 +204,215 @@
             recognition = new SpeechRecognition();
             recognition.continuous = false;
             recognition.lang = 'en-US';
-            recognition.onresult = (event) => { document.getElementById('userInput').value = event.results[0][0].transcript; updateButtonState(); };
-            recognition.onend = () => { document.getElementById('actionBtn').classList.remove('mic-active'); updateButtonState(); };
+            recognition.onresult = (event) => {
+                document.getElementById('userInput').value = event.results[0][0].transcript;
+                updateButtonState();
+            };
+            recognition.onend = () => {
+                document.getElementById('actionBtn').classList.remove('mic-active');
+                updateButtonState();
+            };
         }
 
-        function init() { if (chats.length > 0) loadChat(chats[0].id); else startNewChat(); renderHistory(); updateButtonState(); }
+        function init() {
+            if (chats.length > 0) loadChat(chats[0].id);
+            else startNewChat();
+            renderHistory();
+            updateButtonState();
+        }
 
-        function toggleSidebar() { document.getElementById('sidebar').classList.toggle('open'); document.getElementById('overlay').classList.toggle('show'); }
-        function toggleThemes() { document.getElementById('themeModal').classList.toggle('open'); if(document.getElementById('sidebar').classList.contains('open')) toggleSidebar(); }
-        function closeAllMenus() { document.getElementById('sidebar').classList.remove('open'); document.getElementById('themeModal').classList.remove('open'); document.getElementById('overlay').classList.remove('show'); }
+        function toggleSidebar() {
+            document.getElementById('sidebar').classList.toggle('open');
+            document.getElementById('overlay').classList.toggle('show');
+        }
+        function toggleThemes() {
+            document.getElementById('themeModal').classList.toggle('open');
+            if(document.getElementById('sidebar').classList.contains('open')) toggleSidebar();
+        }
+        function closeAllMenus() {
+            playClick();
+            document.getElementById('sidebar').classList.remove('open');
+            document.getElementById('themeModal').classList.remove('open');
+            document.getElementById('overlay').classList.remove('show');
+        }
 
         function updateButtonState() {
             const text = document.getElementById('userInput').value.trim();
             const btn = document.getElementById('actionBtn');
-            btn.innerHTML = (text.length > 0 || currentFileData) ? '<i class="fa-solid fa-paper-plane"></i>' : '<i class="fa-solid fa-microphone"></i>';
+            if (text.length > 0 || currentFileData) {
+                btn.innerHTML = '<i class="fa-solid fa-paper-plane"></i>';
+            } else {
+                btn.innerHTML = '<i class="fa-solid fa-microphone"></i>';
+            }
         }
         function handleAction() {
             const text = document.getElementById('userInput').value.trim();
-            if (text.length > 0 || currentFileData) sendMessage(); else startDictation();
+            if (text.length > 0 || currentFileData) sendMessage();
+            else startDictation();
         }
         function startDictation() {
-            if (recognition) { document.getElementById('actionBtn').classList.add('mic-active'); recognition.start(); } else { alert("Mic not supported."); }
+            playClick();
+            if (recognition) {
+                document.getElementById('actionBtn').classList.add('mic-active');
+                document.getElementById('actionBtn').innerHTML = '<i class="fa-solid fa-microphone-lines"></i>';
+                recognition.start();
+            } else {
+                alert("Mic not supported.");
+            }
         }
         function toggleVoiceMode() {
-            isVoiceOn = !isVoiceOn; const btn = document.getElementById('voiceBtn'); isVoiceOn ? btn.classList.add('on') : btn.classList.remove('on');
+            isVoiceOn = !isVoiceOn;
+            const btn = document.getElementById('voiceBtn');
+            isVoiceOn ? btn.classList.add('on') : btn.classList.remove('on');
         }
 
-        function startNewChat() { currentChatId = Date.now(); chats.unshift({ id: currentChatId, title: "New Session", messages: [] }); saveChats(); loadChat(currentChatId); }
+        function startNewChat() {
+            currentChatId = Date.now();
+            chats.unshift({ id: currentChatId, title: "New Session", messages: [] });
+            saveChats();
+            loadChat(currentChatId);
+        }
         function loadChat(id) {
-            currentChatId = id; const chat = chats.find(c => c.id === id); const wrapper = document.getElementById('chat-wrapper'); wrapper.innerHTML = '';
-            if (chat.messages.length === 0) addMessage("Welcome sir. What can I help you with today?", 'alfred', false);
-            else chat.messages.forEach(m => addMessage(m.text, m.sender, false, m.audio));
+            currentChatId = id;
+            const chat = chats.find(c => c.id === id);
+            const wrapper = document.getElementById('chat-wrapper');
+            wrapper.innerHTML = '';
+            
+            if (chat.messages.length === 0) {
+                addMessage("Welcome sir. What can I help you with today?", 'alfred', false);
+            } else {
+                chat.messages.forEach(m => addMessage(m.text, m.sender, false, m.audio));
+            }
             closeAllMenus();
         }
         
         window.copyCode = function(btn) {
+            playClick();
             const code = btn.parentElement.querySelector('code').innerText;
-            navigator.clipboard.writeText(code).then(() => { const originalText = btn.innerText; btn.innerText = "Copied!"; setTimeout(() => btn.innerText = originalText, 2000); });
+            navigator.clipboard.writeText(code).then(() => {
+                const originalText = btn.innerText;
+                btn.innerText = "Copied!";
+                setTimeout(() => btn.innerText = originalText, 2000);
+            });
         }
 
         function addMessage(text, sender, save = true, audioData = null) {
-            const wrapper = document.getElementById('chat-wrapper'); const div = document.createElement('div'); div.className = `message ${sender}`; div.innerHTML = marked.parse(text);
+            const wrapper = document.getElementById('chat-wrapper');
+            const div = document.createElement('div');
+            div.className = `message ${sender}`;
+            
+            div.innerHTML = marked.parse(text);
+            
             div.querySelectorAll('pre').forEach((block) => {
-                const btn = document.createElement('button'); btn.className = 'copy-btn'; btn.innerText = 'Copy'; btn.onclick = function() { window.copyCode(this); }; block.appendChild(btn);
-                const code = block.querySelector('code'); if(code) hljs.highlightElement(code);
+                const btn = document.createElement('button');
+                btn.className = 'copy-btn';
+                btn.innerText = 'Copy';
+                btn.onclick = function() { window.copyCode(this); };
+                block.appendChild(btn);
+                const code = block.querySelector('code');
+                if(code) hljs.highlightElement(code);
             });
-            if (audioData) { const audio = document.createElement('audio'); audio.controls = true; audio.src = "data:audio/mp3;base64," + audioData; div.appendChild(audio); }
-            wrapper.appendChild(div); wrapper.scrollTop = wrapper.scrollHeight;
+
+            if (audioData) {
+                const audio = document.createElement('audio');
+                audio.controls = true;
+                audio.src = "data:audio/mp3;base64," + audioData;
+                div.appendChild(audio);
+            }
+
+            wrapper.appendChild(div);
+            wrapper.scrollTop = wrapper.scrollHeight;
+
             if (save && currentChatId) {
-                const chat = chats.find(c => c.id === currentChatId); chat.messages.push({ text, sender, audio: audioData });
-                if (sender === 'user' && chat.messages.length <= 2) chat.title = text.substring(0, 20) + "..."; saveChats();
+                const chat = chats.find(c => c.id === currentChatId);
+                chat.messages.push({ text, sender, audio: audioData });
+                if (sender === 'user' && chat.messages.length <= 2) {
+                    chat.title = text.substring(0, 20) + "...";
+                }
+                saveChats();
             }
         }
 
         function handleFile(input) {
-            const file = input.files[0]; if (!file) return; const reader = new FileReader();
+            playClick();
+            const file = input.files[0];
+            if (!file) return;
+            const reader = new FileReader();
             reader.onload = (e) => {
-                currentFileData = e.target.result.split(',')[1]; currentMimeType = file.type;
-                let previewHtml = file.type.startsWith('image/') ? `<div class="file-preview"><img src="${e.target.result}" class="img-preview"></div>` : `<div class="file-preview"><i class="fa-solid fa-file"></i> ${file.name}</div>`;
-                addMessage(previewHtml, 'user', false); updateButtonState();
+                currentFileData = e.target.result.split(',')[1];
+                currentMimeType = file.type;
+                
+                let previewHtml = "";
+                if (file.type.startsWith('image/')) {
+                    previewHtml = `<div class="file-preview"><img src="${e.target.result}" class="img-preview"></div>`;
+                } else {
+                    previewHtml = `<div class="file-preview"><i class="fa-solid fa-file"></i> ${file.name}</div>`;
+                }
+                
+                addMessage(previewHtml, 'user', false);
+                updateButtonState();
             };
             reader.readAsDataURL(file);
         }
 
         async function sendMessage() {
-            const input = document.getElementById('userInput'); const text = input.value.trim(); if (!text && !currentFileData) return;
-            if(text) addMessage(text, 'user'); input.value = ''; updateButtonState(); input.focus(); 
-            const chat = chats.find(c => c.id === currentChatId); const historyContext = chat.messages.slice(-6).map(m => ({ role: m.sender, content: m.text }));
-            const loadingDiv = document.createElement('div'); loadingDiv.className = 'message alfred'; loadingDiv.innerText = '...'; loadingDiv.id = 'loading'; document.getElementById('chat-wrapper').appendChild(loadingDiv);
+            const input = document.getElementById('userInput');
+            const text = input.value.trim();
+            if (!text && !currentFileData) return;
+
+            playSend(); // PLAY SEND SOUND
+            if(text) addMessage(text, 'user');
+            input.value = '';
+            updateButtonState();
+            input.focus(); 
+
+            const chat = chats.find(c => c.id === currentChatId);
+            const historyContext = chat.messages.slice(-6).map(m => ({ role: m.sender, content: m.text }));
+
+            const loadingDiv = document.createElement('div');
+            loadingDiv.className = 'message alfred';
+            loadingDiv.innerText = '...';
+            loadingDiv.id = 'loading';
+            document.getElementById('chat-wrapper').appendChild(loadingDiv);
+
             try {
-                const res = await fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ command: text, file_data: currentFileData, mime_type: currentMimeType, speak: isVoiceOn, history: historyContext }) });
-                const data = await res.json(); document.getElementById('loading').remove();
-                addMessage(data.response, 'alfred', true, data.audio); if (data.audio) new Audio("data:audio/mp3;base64," + data.audio).play();
-            } catch (e) { if(document.getElementById('loading')) document.getElementById('loading').remove(); addMessage("Connection Error.", 'alfred', false); }
-            currentFileData = null; currentMimeType = null; updateButtonState();
+                const res = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ command: text, file_data: currentFileData, mime_type: currentMimeType, speak: isVoiceOn, history: historyContext })
+                });
+                const data = await res.json();
+                document.getElementById('loading').remove();
+                
+                playReceive(); // PLAY RECEIVE SOUND
+                addMessage(data.response, 'alfred', true, data.audio);
+                if (data.audio) new Audio("data:audio/mp3;base64," + data.audio).play();
+            } catch (e) {
+                if(document.getElementById('loading')) document.getElementById('loading').remove();
+                addMessage("Connection Error.", 'alfred', false);
+            }
+            currentFileData = null;
+            currentMimeType = null;
+            updateButtonState();
         }
         
         function saveChats() { localStorage.setItem('alfred_chats', JSON.stringify(chats)); renderHistory(); }
         function renderHistory() {
-            const list = document.getElementById('historyList'); list.innerHTML = '';
-            chats.forEach(chat => { const div = document.createElement('div'); div.className = 'history-item'; div.innerText = chat.title; div.onclick = () => loadChat(chat.id); list.appendChild(div); });
+            const list = document.getElementById('historyList');
+            list.innerHTML = '';
+            chats.forEach(chat => {
+                const div = document.createElement('div');
+                div.className = 'history-item';
+                div.innerText = chat.title;
+                div.onclick = () => { playClick(); loadChat(chat.id); };
+                list.appendChild(div);
+            });
         }
 
-        document.getElementById('userInput').addEventListener('keypress', (e) => { if (e.key === 'Enter') sendMessage(); });
+        document.getElementById('userInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendMessage();
+        });
+
         init();
     </script>
 </body>
