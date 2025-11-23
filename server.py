@@ -17,13 +17,20 @@ from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
+import logging
+
+# --- LOGGING SETUP ---
+# This keeps the console clean by only showing Warnings and Errors
+logging.basicConfig(level=logging.WARNING)
+logger = logging.getLogger(__name__)
 
 # --- LIBRARIES ---
-from fpdf import FPDF
+# NOTE: fpdf below requires 'fpdf2' installed in requirements.txt
+from fpdf import FPDF 
 from bs4 import BeautifulSoup
 from youtube_transcript_api import YouTubeTranscriptApi
-from docx import Document # Standard Word Library
-from docx.shared import Pt
+from docx import Document 
+from docx.shared import Pt 
 
 # --- KEYS ---
 SERVER_SECRET_KEY = "Mbuso.08@"
@@ -31,6 +38,7 @@ ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY")
 BRIAN_VOICE_ID = "nPczCjzI2devNBz1zQrb"
 HUGGINGFACE_API_KEY = os.environ.get("HUGGINGFACE_API_KEY")
 
+# --- SYSTEM INSTRUCTIONS ---
 ALFRED_SYSTEM_INSTRUCTIONS = """
 You are Alfred, an elite intelligent assistant.
 User: Mbuso (Sir). Location: South Africa.
@@ -39,6 +47,12 @@ PROTOCOL:
 1. Answer the CURRENT query directly.
 2. IF A LINK IS PROVIDED: The server has read it. Summarize or analyze the 'Link Content'.
 3. IF A FILE IS UPLOADED: Analyze it.
+
+*** CRITICAL: CODE GENERATION STANDARDS ***
+When providing code (Python, JavaScript, HTML, etc.):
+1. **Quality Priority:** ALWAYS prioritize the single best, most highly efficient, modern, and secure solution.
+2. **Avoid Legacy Methods:** DO NOT use outdated or discouraged methods (e.g., alert(), document.write(), or excessive global variables).
+3. **Avoid Variations:** DO NOT provide multiple alternative solutions unless the user explicitly asks for them. Deliver the best solution immediately.
 
 *** CRITICAL: YOUTUBE FALLBACK STRATEGY ***
 If you see [YOUTUBE_FALLBACK_METADATA] in the input, it means the direct video feed was blocked.
@@ -82,39 +96,77 @@ class UserRequest(BaseModel):
     thinking_mode: bool = False
     history: List[ChatMessage] = []
 
+# --- HELPER: PARSE MARKDOWN TABLES ---
+def parse_markdown_table(content):
+    """Extracts markdown table data into a clean list of lists."""
+    lines = content.split('\n')
+    table_buffer = []
+    in_table = False
+    
+    for line in lines:
+        if "|" in line and len(line.strip()) > 3:
+            # Detect row but skip separator lines (e.g., |---|---|)
+            if not any("---" in cell for cell in line.split('|')):
+                row_data = [cell.strip() for cell in line.split('|')]
+                # Clean empty ends from split
+                if row_data and row_data[0] == '': row_data.pop(0)
+                if row_data and row_data[-1] == '': row_data.pop()
+                table_buffer.append(row_data)
+                in_table = True
+        elif in_table:
+            break # End of table block
+    
+    if table_buffer:
+        # Normalize row lengths
+        max_cols = max(len(row) for row in table_buffer)
+        normalized_data = [row + [""] * (max_cols - len(row)) for row in table_buffer]
+        return normalized_data, lines
+    return None, lines
+
 # --- RESEARCHER ENGINE ---
 def get_url_content(text):
     url_match = re.search(r'(https?://[^\s]+)', text)
     if not url_match: return None
     url = url_match.group(0)
-    print(f"Scraping URL: {url}")
+    logger.info(f"Scraping URL: {url}")
     
     try:
+        # YOUTUBE LOGIC
         if "youtube.com" in url or "youtu.be" in url:
             video_id = None
             if "v=" in url: video_id = url.split("v=")[1].split("&")[0]
             elif "youtu.be" in url: video_id = url.split("/")[-1]
+            
             if video_id:
                 try:
+                    # Attempt 1: Direct Transcript
                     transcript = YouTubeTranscriptApi.get_transcript(video_id)
                     full_text = " ".join([t['text'] for t in transcript])
                     return f"[YOUTUBE TRANSCRIPT]: {full_text[:15000]}"
-                except Exception:
+                except Exception as e:
+                    logger.warning(f"YouTube Transcript failed: {e}")
+                    # Attempt 2: Fallback Metadata for Deep Search
                     try:
-                        headers = {'User-Agent': 'Mozilla/5.0'}
+                        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
                         res = requests.get(url, headers=headers, timeout=5)
                         soup = BeautifulSoup(res.content, 'html.parser')
                         title = soup.title.string if soup.title else "Unknown Title"
                         return f"[YOUTUBE_FALLBACK_METADATA]: Title: {title} | URL: {url} | (Transcript Blocked - INITIATE DEEP SEARCH)"
-                    except: return "[YOUTUBE ERROR]: Video inaccessible."
+                    except Exception as e:
+                        logger.error(f"YouTube Metadata scrape failed: {e}")
+                        return f"[YOUTUBE ERROR]: Video inaccessible."
 
-        headers = {'User-Agent': 'Mozilla/5.0'}
+        # STANDARD WEB LOGIC
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
         response = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(response.content, 'html.parser')
         for script in soup(["script", "style"]): script.extract()
         text_content = soup.get_text(separator=' ', strip=True)
         return f"[WEBSITE CONTENT]: {text_content[:10000]}"
-    except Exception as e: return f"[ERROR READING LINK]: {str(e)}"
+
+    except Exception as e:
+        logger.error(f"General link scraping failed: {e}")
+        return f"[ERROR READING LINK]: {str(e)}"
 
 # --- IMAGE GEN ---
 def generate_high_quality_image(prompt):
@@ -132,11 +184,13 @@ def generate_high_quality_image(prompt):
                 image_b64 = base64.b64encode(response.content).decode('utf-8')
                 filename = f"gen_{datetime.now().strftime('%H%M%S')}.jpg"
                 return image_b64, filename
-            elif response.status_code == 503: time.sleep(1); continue
+            elif response.status_code == 503:
+                time.sleep(1)
+                continue
         except: continue
     return None, None
 
-# --- FILE FACTORY (DOCX TABLE SUPPORT ADDED) ---
+# --- FILE FACTORY ---
 def create_file(content, file_type):
     buffer = io.BytesIO()
     timestamp = datetime.now().strftime('%H%M%S')
@@ -148,58 +202,29 @@ def create_file(content, file_type):
             doc = Document()
             doc.add_heading('Alfred Generation', 0)
             
-            lines = content.split('\n')
-            table_buffer = []
-            in_table = False
+            table_data, lines = parse_markdown_table(content)
             
-            for line in lines:
-                # Table Detection
-                if "|" in line and len(line.strip()) > 3:
-                    if not in_table: in_table = True
-                    
-                    row_data = [cell.strip() for cell in line.split('|')]
-                    if row_data and row_data[0] == '': row_data.pop(0)
-                    if row_data and row_data[-1] == '': row_data.pop()
-                    
-                    if not any("---" in cell for cell in row_data):
-                        table_buffer.append(row_data)
-                else:
-                    # Flush Table to Word
-                    if in_table and table_buffer:
-                        try:
-                            max_cols = max(len(row) for row in table_buffer)
-                            # Create Word Table
-                            table = doc.add_table(rows=len(table_buffer), cols=max_cols)
-                            table.style = 'Table Grid'
-                            
-                            for i, row_data in enumerate(table_buffer):
-                                row = table.rows[i]
-                                for j, text in enumerate(row_data):
-                                    if j < len(row.cells):
-                                        row.cells[j].text = str(text)
-                        except:
-                            # Fallback if table fails
-                            for row in table_buffer: doc.add_paragraph(" | ".join(row))
-                        
-                        table_buffer = []
-                        in_table = False
-                    
-                    # Normal Text
+            if table_data:
+                # Create Table
+                table = doc.add_table(rows=len(table_data), cols=len(table_data[0]))
+                table.style = 'Table Grid'
+                for i, row_data in enumerate(table_data):
+                    row = table.rows[i]
+                    for j, text in enumerate(row_data):
+                        row.cells[j].text = str(text)
+                
+                # Print text AROUND the table (simplified logic)
+                # Note: This simple logic prints content that ISN'T the table
+                for line in lines:
+                    if not "|" in line and not "---" in line and line.strip():
+                        if line.startswith("#"): doc.add_heading(line.replace("#", "").strip(), level=1)
+                        else: doc.add_paragraph(line)
+            else:
+                # No table found, print all
+                for line in lines:
                     if line.strip():
                         if line.startswith("#"): doc.add_heading(line.replace("#", "").strip(), level=1)
                         else: doc.add_paragraph(line)
-            
-            # Final Flush
-            if in_table and table_buffer:
-                try:
-                    max_cols = max(len(row) for row in table_buffer)
-                    table = doc.add_table(rows=len(table_buffer), cols=max_cols)
-                    table.style = 'Table Grid'
-                    for i, row_data in enumerate(table_buffer):
-                        row = table.rows[i]
-                        for j, text in enumerate(row_data):
-                             if j < len(row.cells): row.cells[j].text = str(text)
-                except: pass
 
             doc.save(buffer)
             return base64.b64encode(buffer.getvalue()).decode('utf-8'), f"{filename}.docx"
@@ -210,51 +235,30 @@ def create_file(content, file_type):
             pdf.add_page()
             pdf.set_font("Helvetica", size=12)
             
-            lines = content.split('\n')
-            table_buffer = []
-            in_table = False
+            table_data, lines = parse_markdown_table(content)
             
-            for line in lines:
-                if "|" in line and len(line.strip()) > 3:
-                    if not in_table: in_table = True; pdf.ln(5)
-                    row_data = [cell.strip() for cell in line.split('|')]
-                    if row_data and row_data[0] == '': row_data.pop(0)
-                    if row_data and row_data[-1] == '': row_data.pop()
-                    if not any("---" in cell for cell in row_data): table_buffer.append(row_data)
-                else:
-                    if in_table and table_buffer:
-                        try:
-                            max_cols = max(len(row) for row in table_buffer)
-                            normalized_data = []
-                            for row in table_buffer:
-                                while len(row) < max_cols: row.append("") 
-                                normalized_data.append(row[:max_cols])
-                            with pdf.table() as table:
-                                for row in normalized_data:
-                                    r = table.row()
-                                    for item in row: r.cell(str(item))
-                        except:
-                            pdf.set_font("Courier", size=10)
-                            for row in table_buffer: pdf.multi_cell(0, 5, " | ".join(row))
-                            pdf.set_font("Helvetica", size=12)
-                        table_buffer = []
-                        in_table = False; pdf.ln(5)
+            if table_data:
+                # Render Table
+                with pdf.table() as table:
+                    for row_data in table_data:
+                        r = table.row()
+                        for item in row_data: r.cell(str(item))
+                pdf.ln(10)
+                
+                # Render Text (Simplified: prints non-table text)
+                for line in lines:
+                    if not "|" in line and not "---" in line and line.strip():
+                        safe_text = line.encode('latin-1', 'replace').decode('latin-1')
+                        pdf.multi_cell(0, 7, safe_text)
+            else:
+                for line in lines:
                     if line.strip():
                         safe_text = line.encode('latin-1', 'replace').decode('latin-1')
                         pdf.multi_cell(0, 7, safe_text)
-            
-            if in_table and table_buffer:
-                try:
-                    max_cols = max(len(row) for row in table_buffer)
-                    normalized_data = [row + [""] * (max_cols - len(row)) for row in table_buffer]
-                    with pdf.table() as table:
-                        for row in normalized_data:
-                            r = table.row()
-                            for item in row: r.cell(str(item))
-                except: pass
 
             return base64.b64encode(pdf.output(dest='S').encode('latin-1')).decode('utf-8'), f"{filename}.pdf"
-            
+
+        # --- OTHER FORMATS ---
         elif file_type == "pptx":
             from pptx import Presentation
             prs = Presentation()
@@ -268,7 +272,7 @@ def create_file(content, file_type):
             return base64.b64encode(content.encode('utf-8')).decode('utf-8'), f"{filename}.txt"
             
     except Exception as e:
-        print(f"File Gen Critical Error: {e}")
+        logger.critical(f"File Gen Error: {e}")
         return base64.b64encode(f"Error creating file. Raw content:\n\n{content}".encode('utf-8')).decode('utf-8'), f"{filename}_fallback.txt"
     
     return None, None
@@ -283,7 +287,9 @@ def execute_chart_code(code):
         plt.close()
         buf.seek(0)
         return base64.b64encode(buf.getvalue()).decode('utf-8'), "alfred_chart.png"
-    except: return None, None
+    except Exception as e:
+        logger.error(f"Chart Error: {e}")
+        return None, None
 
 # --- VOICE ---
 def generate_voice(text):
@@ -302,7 +308,7 @@ def generate_voice(text):
 
 @app.get("/")
 def home():
-    return {"status": "Alfred V2.4 Online (Word Tables + Deep Search)"}
+    return {"status": "Alfred V2.6 Online (Quality & Stability)"}
 
 @app.post("/command")
 def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(None)):
@@ -312,18 +318,7 @@ def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(
     if not client: return {"response": "Sir, connection severed (No API Key)."}
 
     try:
-        sa_timezone = pytz.timezone('Africa/Johannesburg')
-        now = datetime.now(sa_timezone).strftime("%A, %B %d, %Y at %I:%M %p (SAST)")
-        
-        requested_type = None
-        lower_cmd = request.command.lower()
-        if "pdf" in lower_cmd: requested_type = "pdf"
-        elif "word" in lower_cmd or "docx" in lower_cmd: requested_type = "docx"
-        elif "presentation" in lower_cmd or "pptx" in lower_cmd: requested_type = "pptx"
-        elif "text file" in lower_cmd or "txt" in lower_cmd: requested_type = "txt"
-
-        selected_model = 'gemini-2.0-flash-thinking-exp-01-21' if request.thinking_mode else 'gemini-2.0-flash'
-
+        # --- CONTEXT SETUP ---
         chat_history = []
         for msg in request.history:
             role = "model" if msg.role == "alfred" else "user"
@@ -332,9 +327,12 @@ def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(
         # --- SCRAPE LINK ---
         scraped_content = get_url_content(request.command)
         prompt_text = ""
+        
         if scraped_content:
             prompt_text = f"[System Info: {scraped_content}]\n\nUser Query: {request.command}"
         else:
+            sa_timezone = pytz.timezone('Africa/Johannesburg')
+            now = datetime.now(sa_timezone).strftime("%A, %B %d, %Y at %I:%M %p (SAST)")
             prompt_text = f"[Current SAST Time: {now}] {request.command}"
 
         current_parts = [prompt_text]
@@ -344,7 +342,17 @@ def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(
                 current_parts.append(types.Part.from_bytes(data=file_bytes, mime_type=request.mime_type))
             except: pass
 
-        # --- AUTO-RETRY MECHANISM ---
+        requested_type = None
+        lower_cmd = request.command.lower()
+        if "pdf" in lower_cmd: requested_type = "pdf"
+        elif "word" in lower_cmd or "docx" in lower_cmd: requested_type = "docx"
+        elif "presentation" in lower_cmd or "pptx" in lower_cmd: requested_type = "pptx"
+        elif "text file" in lower_cmd or "txt" in lower_cmd: requested_type = "txt"
+
+        # Always use Thinking model for best results
+        selected_model = 'gemini-2.0-flash-thinking-exp-01-21' if request.thinking_mode else 'gemini-2.0-flash'
+
+        # --- AUTO-RETRY LOOP (Fixes 500 Errors) ---
         response = None
         for attempt in range(3):
             try:
@@ -365,7 +373,7 @@ def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(
                 response = chat_session.send_message(message=current_parts)
                 break 
             except Exception as e:
-                print(f"Attempt {attempt+1} failed: {e}")
+                logger.warning(f"AI Attempt {attempt+1} failed. Retrying... Error: {e}")
                 if attempt == 2: raise e
                 time.sleep(1)
         
@@ -386,7 +394,8 @@ def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(
                 else:
                     reply = "I attempted to create the file, but an internal error occurred."
             except Exception as e:
-                reply = f"I prepared the content, but the file assembly failed. Error: {str(e)}"
+                logger.error(f"File Parse Error: {e}")
+                reply = "I prepared the content, but the file assembly failed."
 
         # --- 2. IMAGE GEN ---
         elif "IMAGE_GEN_REQUEST:" in reply:
@@ -406,6 +415,7 @@ def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(
         audio_data = generate_voice(reply) if request.speak else None
 
     except Exception as e:
+        logger.error(f"System Error: {e}")
         reply = f"SYSTEM ERROR: {str(e)}"
         audio_data, gen_file_data, gen_filename = None, None, None
 
