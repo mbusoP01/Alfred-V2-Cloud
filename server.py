@@ -37,8 +37,8 @@ User: Mbuso (Sir). Location: South Africa.
 
 PROTOCOL:
 1. Answer the CURRENT query directly.
-2. IF A LINK IS PROVIDED: The server has read it for you. Summarize or analyze the 'Link Content' provided in the prompt.
-3. IF A FILE IS UPLOADED: Analyze it thoroughly.
+2. IF A LINK IS PROVIDED: The server has read it. Summarize or analyze the 'Link Content'.
+3. IF A FILE IS UPLOADED: Analyze it.
 
 *** CRITICAL: FILE GENERATION ***
 If user asks to create/generate a file:
@@ -79,15 +79,12 @@ class UserRequest(BaseModel):
 
 # --- RESEARCHER ENGINE (WEB SCRAPER) ---
 def get_url_content(text):
-    # Find first URL in text
     url_match = re.search(r'(https?://[^\s]+)', text)
     if not url_match: return None
     url = url_match.group(0)
-    
     print(f"Scraping URL: {url}")
     
     try:
-        # 1. YouTube Logic
         if "youtube.com" in url or "youtu.be" in url:
             video_id = None
             if "v=" in url: video_id = url.split("v=")[1].split("&")[0]
@@ -96,18 +93,14 @@ def get_url_content(text):
             if video_id:
                 transcript = YouTubeTranscriptApi.get_transcript(video_id)
                 full_text = " ".join([t['text'] for t in transcript])
-                return f"[YOUTUBE TRANSCRIPT]: {full_text[:10000]}" # Limit to 10k chars
+                return f"[YOUTUBE TRANSCRIPT]: {full_text[:10000]}"
         
-        # 2. General Website Logic
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
         response = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(response.content, 'html.parser')
-        
-        # Kill script and style elements
         for script in soup(["script", "style"]): script.extract()
-        
         text_content = soup.get_text(separator=' ', strip=True)
-        return f"[WEBSITE CONTENT]: {text_content[:10000]}" # Limit to 10k chars
+        return f"[WEBSITE CONTENT]: {text_content[:10000]}"
 
     except Exception as e:
         return f"[ERROR READING LINK]: {str(e)}"
@@ -163,7 +156,8 @@ def create_file(content, file_type):
             return base64.b64encode(buffer.getvalue()).decode('utf-8'), f"{filename}.pptx"
         elif file_type == "txt":
             return base64.b64encode(content.encode('utf-8')).decode('utf-8'), f"{filename}.txt"
-    except: pass
+    except Exception as e:
+        print(f"File Gen Error: {e}")
     return None, None
 
 # --- CHART ENGINE ---
@@ -176,8 +170,7 @@ def execute_chart_code(code):
         plt.close()
         buf.seek(0)
         return base64.b64encode(buf.getvalue()).decode('utf-8'), "alfred_chart.png"
-    except Exception as e:
-        return None, None
+    except: return None, None
 
 # --- VOICE ---
 def generate_voice(text):
@@ -196,7 +189,7 @@ def generate_voice(text):
 
 @app.get("/")
 def home():
-    return {"status": "Alfred Online (Researcher Mode)"}
+    return {"status": "Alfred Online (Researcher + Fixes)"}
 
 @app.post("/command")
 def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(None)):
@@ -223,7 +216,7 @@ def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(
             role = "model" if msg.role == "alfred" else "user"
             chat_history.append(types.Content(role=role, parts=[types.Part.from_text(text=msg.content)]))
 
-        # --- SCRAPE LINK IF PRESENT ---
+        # --- SCRAPE LINK ---
         scraped_content = get_url_content(request.command)
         if scraped_content:
             prompt_text = f"[System: User provided a link. Here is the content: {scraped_content}]\n\nUser Query: {request.command}"
@@ -258,22 +251,28 @@ def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(
         gen_file_data = None
         gen_filename = None
 
-        # 1. FILE GEN
-        if "<<<FILE_START>>>" in reply and requested_type:
+        # --- 1. FILE GEN FIX ---
+        if "<<<FILE_START>>>" in reply:
             try:
                 content = reply.split("<<<FILE_START>>>")[1].split("<<<FILE_END>>>")[0].strip()
-                reply = f"I have manufactured the {requested_type.upper()} document for you, Sir."
+                # ALWAYS remove the raw code from the chat
+                reply = "I have attempted to manufacture the document for you, Sir."
+                if not requested_type: requested_type = "txt" # Fallback
+                
                 gen_file_data, gen_filename = create_file(content, requested_type)
-            except: pass
+                if gen_file_data:
+                    reply = f"I have successfully created the {requested_type.upper()} file."
+            except Exception:
+                reply = "I prepared the content, but the file assembly failed. Please try again."
 
-        # 2. IMAGE GEN
+        # --- 2. IMAGE GEN ---
         elif "IMAGE_GEN_REQUEST:" in reply:
             image_prompt = reply.split("IMAGE_GEN_REQUEST:")[1].strip()
             reply = "I am rendering the image, Sir."
             gen_file_data, gen_filename = generate_high_quality_image(image_prompt)
             if not gen_file_data: reply = "Visual engine is busy. Please retry."
 
-        # 3. CHART GEN
+        # --- 3. CHART GEN ---
         elif "<<<CHART_START>>>" in reply:
             try:
                 code = reply.split("<<<CHART_START>>>")[1].split("<<<CHART_END>>>")[0].strip()
