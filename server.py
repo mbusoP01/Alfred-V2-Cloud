@@ -22,8 +22,9 @@ from typing import List, Optional
 from fpdf import FPDF
 from docx import Document
 from pptx import Presentation
-from pptx.util import Pt as PptxPt
+from pptx.util import Pt as PptxPt, Inches
 from pptx.dml.color import RGBColor as PptxColor
+from pptx.enum.text import PP_ALIGN
 from bs4 import BeautifulSoup
 from youtube_transcript_api import YouTubeTranscriptApi
 from duckduckgo_search import DDGS
@@ -187,7 +188,40 @@ def generate_image(prompt):
         except: continue
     return None, None
 
-# --- ARCHITECT (PPT IMPROVED) ---
+# --- DESIGNER (THEME ENGINE) ---
+def apply_dark_theme(slide, title_text):
+    # 1. Background (Dark Hex: #111111)
+    background = slide.background
+    fill = background.fill
+    fill.solid()
+    fill.fore_color.rgb = PptxColor(17, 17, 17)
+    
+    # 2. Add a Subtle Design Element (Blue Bar on Left)
+    left = Inches(0)
+    top = Inches(0)
+    width = Inches(0.2)
+    height = Inches(7.5)
+    shape = slide.shapes.add_shape(1, left, top, width, height) # 1 = Rectangle
+    shape.fill.solid()
+    shape.fill.fore_color.rgb = PptxColor(10, 132, 255) # Alfred Blue
+    shape.line.fill.background() # No border
+
+    # 3. Title Styling
+    try:
+        title = slide.shapes.title
+        title.text = title_text
+        title.top = Inches(0.5)
+        title.left = Inches(0.5)
+        title.width = Inches(9)
+        
+        for paragraph in title.text_frame.paragraphs:
+            paragraph.font.name = "Arial"
+            paragraph.font.size = PptxPt(40)
+            paragraph.font.bold = True
+            paragraph.font.color.rgb = PptxColor(255, 255, 255) # White
+            paragraph.alignment = PP_ALIGN.LEFT
+    except: pass
+
 def create_file(content, ftype):
     try:
         buf = io.BytesIO()
@@ -215,39 +249,41 @@ def create_file(content, ftype):
             
             # Title Slide
             title_text = slide_chunks[0].replace("Title:", "").strip()
-            if not title_text: title_text = "Alfred Intelligence Presentation"
+            if not title_text: title_text = "Alfred Intelligence"
             
-            s1 = prs.slides.add_slide(prs.slide_layouts[0])
-            s1.background.fill.solid(); s1.background.fill.fore_color.rgb = PptxColor(20, 20, 20)
-            s1.shapes.title.text = title_text[:80]
-            s1.shapes.title.text_frame.paragraphs[0].font.color.rgb = PptxColor(10, 132, 255)
-            s1.placeholders[1].text = f"Generated for Sir\n{datetime.now().strftime('%Y-%m-%d')}"
-            s1.placeholders[1].text_frame.paragraphs[0].font.color.rgb = PptxColor(200, 200, 200)
+            s1 = prs.slides.add_slide(prs.slide_layouts[6]) # 6 = Blank Layout (Custom Design)
+            apply_dark_theme(s1, title_text)
+            
+            # Subtitle for Slide 1
+            txBox = s1.shapes.add_textbox(Inches(0.5), Inches(2), Inches(8), Inches(1))
+            tf = txBox.text_frame
+            p = tf.add_paragraph()
+            p.text = f"Generated for Sir\n{datetime.now().strftime('%Y-%m-%d')}"
+            p.font.color.rgb = PptxColor(150, 150, 150)
+            p.font.size = PptxPt(18)
 
             # Content Slides
             for chunk in slide_chunks[1:]:
                 if not chunk.strip(): continue
                 lines = chunk.strip().split('\n')
                 header = lines[0].strip()
-                
-                # Filter out lines that are just "Content:" or "Body:" labels
                 body_lines = [line.strip() for line in lines[1:] if line.strip() and not line.lower().startswith(("content:", "body:"))]
                 
-                slide = prs.slides.add_slide(prs.slide_layouts[1])
-                slide.background.fill.solid(); slide.background.fill.fore_color.rgb = PptxColor(20, 20, 20)
-                slide.shapes.title.text = header
-                slide.shapes.title.text_frame.paragraphs[0].font.color.rgb = PptxColor(10, 132, 255)
+                slide = prs.slides.add_slide(prs.slide_layouts[6]) # Blank Layout
+                apply_dark_theme(slide, header)
                 
-                tf = slide.placeholders[1].text_frame
-                tf.clear() # Clear default placeholder text
+                # Custom Text Box for Body
+                txBox = slide.shapes.add_textbox(Inches(0.5), Inches(1.5), Inches(9), Inches(5))
+                tf = txBox.text_frame
+                tf.word_wrap = True
                 
                 for line in body_lines:
                     p = tf.add_paragraph()
-                    # Remove hyphen if AI added it, to let PPT handle bullets
-                    clean_line = line[1:].strip() if line.startswith("-") else line
-                    p.text = clean_line
-                    p.font.color.rgb = PptxColor(255, 255, 255)
-                    p.font.size = PptxPt(20) # Increased font size
+                    clean_line = line[1:].strip() if line.startswith("-") or line.startswith("*") else line
+                    p.text = "• " + clean_line # Custom Bullet
+                    p.font.color.rgb = PptxColor(200, 200, 200) # Light Grey
+                    p.font.size = PptxPt(22) # Large Text
+                    p.space_after = PptxPt(10) # Spacing
 
             prs.save(buf)
             return base64.b64encode(buf.getvalue()).decode('utf-8'), f"{fname}.pptx"
