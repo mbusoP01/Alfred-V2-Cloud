@@ -36,7 +36,7 @@ from duckduckgo_search import DDGS
 SERVER_SECRET_KEY = "Mbuso.08@"
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY")
 BRIAN_VOICE_ID = "nPczCjzI2devNBz1zQrb"
-HUGGINGFACE_API_KEY = os.environ.get("HUGGINGFACE_API_KEY")
+HUGGINGFACE_API_KEY = os.environ.get("HUGGINGFACE_API_KEY") # RESTORED
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
 GITHUB_REPO_NAME = os.environ.get("GITHUB_REPO")
 MEMORY_FILE = "alfred_memory.json"
@@ -179,39 +179,51 @@ async def generate_voice_dual(text):
         return base64.b64encode(audio_bytes).decode('utf-8')
     except: return None
 
-# --- ROBUST VISUAL ENGINE (CASCADE STRATEGY) ---
+# --- HYBRID VISUAL ENGINE (TRIPLE REDUNDANCY) ---
 def generate_image(prompt):
-    # PRIORITY LIST: Flux (Best) -> Turbo (Fast) -> Midjourney-Style (Reliable)
-    models_to_try = ["flux", "turbo", "midjourney"]
-    
-    encoded_prompt = requests.utils.quote(prompt)
     seed = int(time.time())
+    encoded = requests.utils.quote(prompt)
     
-    for model in models_to_try:
-        print(f"Attempting Image Gen with Model: {model}")
-        url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?seed={seed}&width=1280&height=720&model={model}"
-        
+    # 1. POLLINATIONS (FLUX) - Best Quality
+    try:
+        print("Trying Flux...")
+        url = f"https://image.pollinations.ai/prompt/{encoded}?seed={seed}&width=1280&height=720&model=flux"
+        res = requests.get(url, timeout=15)
+        if res.status_code == 200 and len(res.content) > 1000:
+            return base64.b64encode(res.content).decode('utf-8'), f"gen_{seed}.jpg"
+    except: pass
+
+    # 2. POLLINATIONS (TURBO) - Faster, Lower Load
+    try:
+        print("Trying Turbo...")
+        url = f"https://image.pollinations.ai/prompt/{encoded}?seed={seed}&width=1280&height=720&model=turbo"
+        res = requests.get(url, timeout=15)
+        if res.status_code == 200 and len(res.content) > 1000:
+            return base64.b64encode(res.content).decode('utf-8'), f"gen_{seed}.jpg"
+    except: pass
+
+    # 3. HUGGING FACE (BACKUP) - Requires Key
+    if HUGGINGFACE_API_KEY:
         try:
-            # 25 second timeout per model
-            response = requests.get(url, timeout=25)
-            if response.status_code == 200 and len(response.content) > 1000:
-                return base64.b64encode(response.content).decode('utf-8'), f"alfred_vision_{seed}.jpg"
-        except Exception as e:
-            print(f"Model {model} failed: {e}")
-            continue # Try next model immediately
-            
-    return None, "Visual Systems Busy (All models overloaded)."
+            print("Trying Hugging Face...")
+            headers = {"Authorization": f"Bearer {HUGGINGFACE_API_KEY}"}
+            models = ["https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0"]
+            for m in models:
+                r = requests.post(m, headers=headers, json={"inputs": prompt}, timeout=20)
+                if r.status_code == 200 and "image" in r.headers.get("content-type", ""):
+                    return base64.b64encode(r.content).decode('utf-8'), f"gen_{seed}.jpg"
+        except: pass
+
+    return None, "Visual Systems Offline (All Mirrors Busy)."
 
 # --- THEME ENGINE ---
 def apply_neon_theme(slide, is_title_slide=False):
     bg = slide.background; fill = bg.fill; fill.solid()
     fill.fore_color.rgb = PptxColor(5, 5, 16)
-    
     top = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0), Inches(0), Inches(10), Inches(0.15))
     top.fill.solid(); top.fill.fore_color.rgb = PptxColor(0, 243, 255); top.line.fill.background()
     btm = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0), Inches(7.35), Inches(10), Inches(0.15))
     btm.fill.solid(); btm.fill.fore_color.rgb = PptxColor(188, 19, 254); btm.line.fill.background()
-
     if is_title_slide:
         card = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(1), Inches(2), Inches(8), Inches(3.5))
     else:
@@ -227,7 +239,6 @@ def create_file(content, ftype):
             try:
                 prs = Presentation()
                 slide_chunks = re.split(r'Slide \d+:', content, flags=re.IGNORECASE)
-                
                 title_text = slide_chunks[0].replace("Title:", "").strip() or "Alfred Intelligence"
                 s1 = prs.slides.add_slide(prs.slide_layouts[6])
                 apply_neon_theme(s1, True)
@@ -245,40 +256,29 @@ def create_file(content, ftype):
                     lines = chunk.strip().split('\n')
                     header = lines[0].strip()
                     body_lines = [line.strip() for line in lines[1:] if line.strip() and not line.lower().startswith(("content:", "body:"))]
-                    
                     slide = prs.slides.add_slide(prs.slide_layouts[6])
                     apply_neon_theme(slide, False)
-                    
                     t_box = slide.shapes.add_textbox(Inches(0.8), Inches(0.4), Inches(8.4), Inches(0.8))
                     p = t_box.text_frame.add_paragraph()
                     p.text = header
                     p.font.size = PptxPt(32); p.font.bold = True; p.font.color.rgb = PptxColor(255,255,255)
-                    
                     b_box = slide.shapes.add_textbox(Inches(1), Inches(1.5), Inches(8), Inches(5))
                     bf = b_box.text_frame; bf.word_wrap = True
-                    
                     for line in body_lines:
                         p = bf.add_paragraph()
                         clean = line.lstrip("-*• ").strip()
                         p.text = f"•  {clean}"
                         p.font.size = PptxPt(20); p.font.color.rgb = PptxColor(220,220,220); p.space_after = PptxPt(14)
-
                 prs.save(buf)
                 return base64.b64encode(buf.getvalue()).decode('utf-8'), f"{fname}.pptx"
-            except Exception as e:
-                print(f"PPTX Gen Failed: {e}")
-                return create_file(f"PPTX Generation Failed. Raw:\n\n{content}", "txt")
+            except: return create_file(f"PPTX Failed. Raw:\n\n{content}", "txt")
 
         elif ftype == "docx":
             d = Document(); d.add_paragraph(content); d.save(buf)
             return base64.b64encode(buf.getvalue()).decode('utf-8'), f"{fname}.docx"
-            
         elif ftype == "txt":
             return base64.b64encode(content.encode('utf-8')).decode('utf-8'), f"{fname}.txt"
-            
-    except Exception as e:
-        print(f"File Gen Error: {e}")
-        return None, None
+    except: return None, None
 
 @app.post("/command")
 async def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(None)):
@@ -297,7 +297,6 @@ async def process_command(request: UserRequest, x_alfred_auth: Optional[str] = H
             if search_res: ctx += f"\n{search_res}\n"
 
         prompt = f"[Time: {sa_time}] {ctx} \nUser Query: {request.command}"
-        
         if "presentation" in request.command.lower() or "ppt" in request.command.lower():
             prompt += "\n\n[SYSTEM: Output content in <<<FILE_START_PPTX>>> ... <<<FILE_END>>> tags.]"
         elif "chart" in request.command.lower() or "graph" in request.command.lower():
@@ -342,7 +341,7 @@ async def process_command(request: UserRequest, x_alfred_auth: Optional[str] = H
             p = response.split("IMAGE_GEN_REQUEST:")[1].strip()
             gen_file, gen_name = generate_image(p)
             if gen_file: response = "Here is the visual, Sir."
-            else: response = "Visual Engine Offline (All Mirrors Busy)."
+            else: response = "Visual Engine Offline: All systems busy."
 
         if request.speak: audio = await generate_voice_dual(response)
 
