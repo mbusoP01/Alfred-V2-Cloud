@@ -87,20 +87,33 @@ def save_memory_fact(fact):
 
 pull_memory_from_cloud()
 
-# --- SYSTEM PROMPT ---
+# --- SYSTEM PROMPT (OS INTEGRATOR EDITION) ---
 def get_system_instructions():
     return f"""
-You are Alfred, an elite intelligent assistant & Senior Full-Stack Engineer.
+You are Alfred, an elite intelligent assistant & Operating System Integrator.
 User: Mbuso (Sir). Location: South Africa.
 
 *** MEMORY ***
 {load_memory()}
 
-*** PROTOCOLS ***
-1. CODING: Write clean, modular, production-ready code. Handle errors. Use comments.
-2. FILES: <<<FILE_START_PPTX>>> or <<<FILE_START_DOCX>>> tags.
-3. VISUALS: <<<CHART_START>>> JSON <<<CHART_END>>> or "IMAGE_GEN_REQUEST: Prompt".
-4. GENERAL: Be concise but thorough. Save facts: <<<MEM_SAVE>>> fact <<<MEM_END>>>.
+*** IOS CONTROL PROTOCOL (CRITICAL) ***
+If the user asks for a phone action, output strictly in JSON tags:
+1. REMINDERS: <<<IOS_CMD>>> {{"type": "reminder", "title": "Title", "notes": "Details", "time": "HH:MM"}} <<<END>>>
+2. ALARMS: <<<IOS_CMD>>> {{"type": "alarm", "time": "HH:MM", "label": "Name"}} <<<END>>>
+3. MESSAGES: <<<IOS_CMD>>> {{"type": "message", "contact": "Name", "body": "Message content"}} <<<END>>>
+4. HEALTH LOG: <<<IOS_CMD>>> {{"type": "health", "metric": "water/cals/steps", "value": "number"}} <<<END>>>
+5. HOMEKIT: <<<IOS_CMD>>> {{"type": "home", "device": "Lights/TV", "state": "on/off"}} <<<END>>>
+
+*** BEHAVIORAL PROTOCOL ***
+- Analyze input context (Time, Location, Health).
+- If late night + low sleep -> Suggest rest.
+- If sedentary -> Suggest movement.
+- Always prioritize Sir's wellbeing.
+
+*** STANDARD PROTOCOLS ***
+- Files: <<<FILE_START_PPTX>>> content <<<FILE_END>>>
+- Visuals: <<<CHART_START>>> JSON <<<CHART_END>>>
+- Images: "IMAGE_GEN_REQUEST: [Prompt]"
 """
 
 api_key = os.environ.get("GEMINI_API_KEY")
@@ -118,9 +131,16 @@ class UploadedFile(BaseModel):
     data: str
     mime_type: str
 
+# NEW: Context Model
+class UserContext(BaseModel):
+    local_time: Optional[str] = None
+    location: Optional[str] = None
+    health_stats: Optional[str] = None
+
 class UserRequest(BaseModel):
     command: str
     files: List[UploadedFile] = []
+    context: Optional[UserContext] = None # New Field for Siri Data
     speak: bool = False
     thinking_mode: bool = False
     history: List[ChatMessage] = []
@@ -226,6 +246,12 @@ def create_file(content, ftype):
 async def stream_response_generator(request_data):
     try:
         sa_time = datetime.now(pytz.timezone('Africa/Johannesburg')).strftime("%H:%M")
+        
+        # INJECT PHONE DATA INTO PROMPT
+        phone_context = ""
+        if request_data.context:
+            phone_context = f"\n[PHONE DATA -> Time: {request_data.context.local_time}, Loc: {request_data.context.location}, Health: {request_data.context.health_stats}]"
+
         hist = [types.Content(role="model" if m.role=="alfred" else "user", parts=[types.Part.from_text(text=m.content)]) for m in request_data.history]
         
         ctx = ""
@@ -233,7 +259,8 @@ async def stream_response_generator(request_data):
             res = perform_web_search(request_data.command)
             if res: ctx += f"\n{res}\n"
         
-        prompt = f"[Time: {sa_time}] {ctx} \nUser: {request_data.command}"
+        prompt = f"[Current SAST: {sa_time}] {phone_context} {ctx} \nUser: {request_data.command}"
+        
         if "presentation" in request_data.command.lower() or "ppt" in request_data.command.lower(): prompt += "\n[SYSTEM: Output <<<FILE_START_PPTX>>>...]"
         
         parts = [prompt]
@@ -242,11 +269,9 @@ async def stream_response_generator(request_data):
                 try: parts.append(types.Part.from_bytes(data=base64.b64decode(f.data), mime_type=f.mime_type))
                 except: pass
 
-        # --- MODEL CASCADE ---
         full_response_text = ""
         
         try:
-            # 1. Try Thinking Model (The Ferrari)
             chat = client.chats.create(model='gemini-2.0-flash-thinking-exp-01-21', history=hist, config=types.GenerateContentConfig(system_instruction=get_system_instructions(), tools=[types.Tool(google_search=types.GoogleSearch())]))
             for chunk in chat.send_message_stream(parts):
                 if chunk.text:
@@ -254,21 +279,16 @@ async def stream_response_generator(request_data):
                     yield json.dumps({"type": "text", "content": chunk.text}) + "\n"
                     await asyncio.sleep(0.01)
         except Exception as e:
-            # 2. If 429 (Busy) or 404 (Not Found), Switch to 2.0 Flash (The Reliable Sedan)
-            error_str = str(e)
-            if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str or "404" in error_str:
+            if "429" in str(e) or "404" in str(e):
                 yield json.dumps({"type": "text", "content": "\n[Thinking Model Busy. Switching to 2.0 Flash...]\n"}) + "\n"
-                # Switched to gemini-2.0-flash
                 chat = client.chats.create(model='gemini-2.0-flash', history=hist, config=types.GenerateContentConfig(system_instruction=get_system_instructions(), tools=[types.Tool(google_search=types.GoogleSearch())]))
                 for chunk in chat.send_message_stream(parts):
                     if chunk.text:
                         full_response_text += chunk.text
                         yield json.dumps({"type": "text", "content": chunk.text}) + "\n"
                         await asyncio.sleep(0.01)
-            else:
-                raise e
+            else: raise e
 
-        # Post-Processing
         final_payload = {"type": "meta", "audio": None, "file": None, "chart": None}
         
         if "<<<MEM_SAVE>>>" in full_response_text:
@@ -281,11 +301,8 @@ async def stream_response_generator(request_data):
             if gf: final_payload["file"] = {"data": gf, "name": gn}
 
         content, ftype = None, None
-        if "<<<FILE_START_PPTX>>>" in full_response_text: 
-            content = full_response_text.split("<<<FILE_START_PPTX>>>")[1].split("<<<FILE_END>>>")[0].strip(); ftype="pptx"
-        elif "<<<FILE_START_DOCX>>>" in full_response_text:
-            content = full_response_text.split("<<<FILE_START_DOCX>>>")[1].split("<<<FILE_END>>>")[0].strip(); ftype="docx"
-        
+        if "<<<FILE_START_PPTX>>>" in full_response_text: content = full_response_text.split("<<<FILE_START_PPTX>>>")[1].split("<<<FILE_END>>>")[0].strip(); ftype="pptx"
+        elif "<<<FILE_START_DOCX>>>" in full_response_text: content = full_response_text.split("<<<FILE_START_DOCX>>>")[1].split("<<<FILE_END>>>")[0].strip(); ftype="docx"
         if content:
             gf, gn = create_file(content, ftype)
             if gf: final_payload["file"] = {"data": gf, "name": gn}
