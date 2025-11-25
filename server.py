@@ -203,30 +203,17 @@ def create_file(content, ftype):
             chunks = re.split(r'Slide \d+:', content, flags=re.IGNORECASE)
             s1 = prs.slides.add_slide(prs.slide_layouts[6]); apply_neon_theme(s1, True)
             title = s1.shapes.add_textbox(Inches(1.2), Inches(2.5), Inches(7.6), Inches(2)); title.text_frame.text = chunks[0].replace("Title:", "").strip()[:80]
-            # Styling title
-            title.text_frame.paragraphs[0].font.size = PptxPt(44)
-            title.text_frame.paragraphs[0].font.bold = True
-            title.text_frame.paragraphs[0].font.color.rgb = PptxColor(255, 255, 255)
-            title.text_frame.paragraphs[0].alignment = PP_ALIGN.CENTER
-            
+            title.text_frame.paragraphs[0].font.size = PptxPt(44); title.text_frame.paragraphs[0].font.bold = True; title.text_frame.paragraphs[0].font.color.rgb = PptxColor(255, 255, 255); title.text_frame.paragraphs[0].alignment = PP_ALIGN.CENTER
             for c in chunks[1:]:
-                if not c.strip(): continue
                 lines = c.strip().split('\n')
                 s = prs.slides.add_slide(prs.slide_layouts[6]); apply_neon_theme(s, False)
                 h = s.shapes.add_textbox(Inches(0.8), Inches(0.4), Inches(8.4), Inches(0.8)); h.text_frame.text = lines[0].strip()
-                h.text_frame.paragraphs[0].font.size = PptxPt(32)
-                h.text_frame.paragraphs[0].font.bold = True
-                h.text_frame.paragraphs[0].font.color.rgb = PptxColor(255, 255, 255)
-                
-                b = s.shapes.add_textbox(Inches(1), Inches(1.5), Inches(8), Inches(5)); 
-                b.text_frame.word_wrap = True
+                h.text_frame.paragraphs[0].font.size = PptxPt(32); h.text_frame.paragraphs[0].font.bold = True; h.text_frame.paragraphs[0].font.color.rgb = PptxColor(255, 255, 255)
+                b = s.shapes.add_textbox(Inches(1), Inches(1.5), Inches(8), Inches(5)); b.text_frame.word_wrap = True
                 for line in lines[1:]:
                     if not line.strip(): continue
-                    p = b.text_frame.add_paragraph()
-                    p.text = "• " + line.lstrip("-*• ").strip()
-                    p.font.size = PptxPt(20)
-                    p.font.color.rgb = PptxColor(220, 220, 220)
-                    p.space_after = PptxPt(14)
+                    p = b.text_frame.add_paragraph(); p.text = "• " + line.lstrip("-*• ").strip()
+                    p.font.size = PptxPt(20); p.font.color.rgb = PptxColor(220, 220, 220); p.space_after = PptxPt(14)
             prs.save(buf); return base64.b64encode(buf.getvalue()).decode('utf-8'), f"{fname}.pptx"
         elif ftype == "docx":
             d = Document(); d.add_paragraph(content); d.save(buf)
@@ -235,10 +222,9 @@ def create_file(content, ftype):
             return base64.b64encode(content.encode('utf-8')).decode('utf-8'), f"{fname}.txt"
     except: return None, None
 
-# --- STREAMING GENERATOR ---
+# --- STREAMING GENERATOR (WITH FALLBACK) ---
 async def stream_response_generator(request_data):
     try:
-        # 1. Setup Context
         sa_time = datetime.now(pytz.timezone('Africa/Johannesburg')).strftime("%H:%M")
         hist = [types.Content(role="model" if m.role=="alfred" else "user", parts=[types.Part.from_text(text=m.content)]) for m in request_data.history]
         
@@ -256,19 +242,31 @@ async def stream_response_generator(request_data):
                 try: parts.append(types.Part.from_bytes(data=base64.b64decode(f.data), mime_type=f.mime_type))
                 except: pass
 
-        # 2. Start Gemini Stream
-        chat = client.chats.create(model='gemini-2.0-flash-thinking-exp-01-21', history=hist, config=types.GenerateContentConfig(system_instruction=get_system_instructions(), tools=[types.Tool(google_search=types.GoogleSearch())]))
-        
+        # --- MODEL CASCADE (THINKING -> TURBO) ---
         full_response_text = ""
         
-        # FIX: USE send_message_stream INSTEAD OF stream=True
-        for chunk in chat.send_message_stream(parts):
-            if chunk.text:
-                full_response_text += chunk.text
-                yield json.dumps({"type": "text", "content": chunk.text}) + "\n"
-                await asyncio.sleep(0.01) # Buffer
+        try:
+            # Try Thinking Model (Ferrari)
+            chat = client.chats.create(model='gemini-2.0-flash-thinking-exp-01-21', history=hist, config=types.GenerateContentConfig(system_instruction=get_system_instructions(), tools=[types.Tool(google_search=types.GoogleSearch())]))
+            for chunk in chat.send_message_stream(parts):
+                if chunk.text:
+                    full_response_text += chunk.text
+                    yield json.dumps({"type": "text", "content": chunk.text}) + "\n"
+                    await asyncio.sleep(0.01)
+        except Exception as e:
+            # If 429 or crash, Switch to Standard Flash (Honda Civic - Reliable)
+            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                yield json.dumps({"type": "text", "content": "\n[Thinking Model Exhausted. Switching to Turbo...]\n"}) + "\n"
+                chat = client.chats.create(model='gemini-1.5-flash', history=hist, config=types.GenerateContentConfig(system_instruction=get_system_instructions(), tools=[types.Tool(google_search=types.GoogleSearch())]))
+                for chunk in chat.send_message_stream(parts):
+                    if chunk.text:
+                        full_response_text += chunk.text
+                        yield json.dumps({"type": "text", "content": chunk.text}) + "\n"
+                        await asyncio.sleep(0.01)
+            else:
+                raise e # Real error
 
-        # 3. Post-Processing
+        # Post-Processing
         final_payload = {"type": "meta", "audio": None, "file": None, "chart": None}
         
         if "<<<MEM_SAVE>>>" in full_response_text:
@@ -302,7 +300,6 @@ async def stream_response_generator(request_data):
         yield json.dumps(final_payload) + "\n"
 
     except Exception as e:
-        # Print trace for debugging on render logs
         traceback.print_exc()
         yield json.dumps({"type": "text", "content": f"\n[System Error: {str(e)}]"}) + "\n"
 
