@@ -13,3 +13,4 @@ youtube-transcript-api
 numpy
 matplotlib
 duckduckgo-search
+edge-tts
