@@ -90,22 +90,22 @@ pull_memory_from_cloud()
 # --- SYSTEM PROMPT ---
 def get_system_instructions():
     return f"""
-You are Alfred, an elite intelligent assistant & Operating System Integrator.
-User: Mbuso (Sir). Location: South Africa.
+You are Alfred, an elite intelligent assistant.
+User Name: Mbuso.
+ADDRESS USER AS: "Sir" (Do not use the name Mbuso in output, only for context).
 
 *** MEMORY ***
 {load_memory()}
 
-*** IOS COMMANDS ***
-1. REMINDER: <<<IOS_CMD>>> {{"type": "reminder", "title": "Title", "time": "HH:MM"}} <<<END>>>
-2. ALARM: <<<IOS_CMD>>> {{"type": "alarm", "time": "HH:MM", "label": "Name"}} <<<END>>>
-3. MESSAGE: <<<IOS_CMD>>> {{"type": "message", "contact": "Name", "body": "Text"}} <<<END>>>
-4. HEALTH: <<<IOS_CMD>>> {{"type": "health", "metric": "steps", "value": "100"}} <<<END>>>
+*** IOS COMMANDS (STRICT JSON) ***
+1. REMINDER: <<<IOS_CMD>>> {{"type": "reminder", "title": "Buy Milk", "time": "17:00"}} <<<END>>>
+2. ALARM: <<<IOS_CMD>>> {{"type": "alarm", "time": "07:00", "label": "Wake Up"}} <<<END>>>
+3. MESSAGE: <<<IOS_CMD>>> {{"type": "message", "contact": "Mom", "body": "I am late"}} <<<END>>>
 
-*** STANDARD PROTOCOLS ***
-- FILES: <<<FILE_START_PPTX>>> content <<<FILE_END>>>
+*** PROTOCOLS ***
+- FILES: <<<FILE_START_PPTX>>> ... <<<FILE_END>>>
 - IMAGES: "IMAGE_GEN_REQUEST: [Prompt]"
-- DEFAULT: Concise answer. Save facts: <<<MEM_SAVE>>> fact <<<MEM_END>>>.
+- BEHAVIOR: Prioritize health. If it is late, suggest rest.
 """
 
 api_key = os.environ.get("GEMINI_API_KEY")
@@ -131,7 +131,6 @@ class UserContext(BaseModel):
 class UserRequest(BaseModel):
     command: str
     files: List[UploadedFile] = []
-    # FIX: Accept String OR Object for context
     context: Optional[Union[UserContext, str]] = None
     speak: bool = False
     thinking_mode: bool = False
@@ -165,7 +164,7 @@ async def process_command(request: UserRequest, x_alfred_auth: Optional[str] = H
     if x_alfred_auth != SERVER_SECRET_KEY: raise HTTPException(status_code=401)
     if not client: return {"response": "No API Key."}
 
-    # --- FIX FOR IOS STRINGIFIED CONTEXT ---
+    # PARSE CONTEXT (STRING OR OBJECT)
     parsed_context = None
     if request.context:
         if isinstance(request.context, str):
@@ -191,7 +190,7 @@ async def process_command(request: UserRequest, x_alfred_auth: Optional[str] = H
             try: parts.append(types.Part.from_bytes(data=base64.b64decode(f.data), mime_type=f.mime_type))
             except: pass
 
-    # --- IPHONE MODE ---
+    # --- IOS MODE (Return Plain Text Only) ---
     if x_client_device == "ios":
         try:
             chat = client.chats.create(model='gemini-2.0-flash-thinking-exp-01-21', history=[types.Content(role="model" if m.role=="alfred" else "user", parts=[types.Part.from_text(text=m.content)]) for m in request.history], config=types.GenerateContentConfig(system_instruction=get_system_instructions(), tools=[types.Tool(google_search=types.GoogleSearch())]))
@@ -199,7 +198,7 @@ async def process_command(request: UserRequest, x_alfred_auth: Optional[str] = H
             text_reply = response.text
         except Exception as e:
             try:
-                # Fallback
+                # Fallback to Flash
                 chat = client.chats.create(model='gemini-2.0-flash', history=[types.Content(role="model" if m.role=="alfred" else "user", parts=[types.Part.from_text(text=m.content)]) for m in request.history], config=types.GenerateContentConfig(system_instruction=get_system_instructions(), tools=[types.Tool(google_search=types.GoogleSearch())]))
                 response = chat.send_message(parts)
                 text_reply = response.text
@@ -212,7 +211,8 @@ async def process_command(request: UserRequest, x_alfred_auth: Optional[str] = H
         
         return Response(content=text_reply, media_type="text/plain")
 
-    # --- WEB MODE ---
+    # --- WEB MODE (Streaming Code Omitted for brevity, assumes previous logic) ---
+    # (The web mode logic from the previous step remains here)
     async def stream_gen():
         try:
             chat = client.chats.create(model='gemini-2.0-flash-thinking-exp-01-21', history=[types.Content(role="model" if m.role=="alfred" else "user", parts=[types.Part.from_text(text=m.content)]) for m in request.history], config=types.GenerateContentConfig(system_instruction=get_system_instructions(), tools=[types.Tool(google_search=types.GoogleSearch())]))
@@ -223,6 +223,7 @@ async def process_command(request: UserRequest, x_alfred_auth: Optional[str] = H
                     yield json.dumps({"type": "text", "content": chunk.text}) + "\n"
                     await asyncio.sleep(0.01)
         except Exception as e:
+            # Fallback for Web
             if "429" in str(e) or "404" in str(e):
                 yield json.dumps({"type": "text", "content": "\n[Switching to Backup Circuit...]\n"}) + "\n"
                 chat = client.chats.create(model='gemini-2.0-flash', history=[types.Content(role="model" if m.role=="alfred" else "user", parts=[types.Part.from_text(text=m.content)]) for m in request.history], config=types.GenerateContentConfig(system_instruction=get_system_instructions(), tools=[types.Tool(google_search=types.GoogleSearch())]))
