@@ -4,57 +4,101 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>⚚ ALFRED_ΣYSTEM ⚚</title>
+    
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22 fill=%22white%22>⚚</text></svg>">
+
     <style>
-        /* ... (Styles remain largely the same, just adding support for multi-file display) ... */
+        /* --- THEMES --- */
         :root { --bg: #000000; --sidebar: #111111; --header: rgba(20,20,20,0.95); --user-msg: #0A84FF; --alfred-msg: #262629; --text: #FFFFFF; --accent: #0A84FF; --border: #333; }
         [data-theme="midnight"] { --bg:#000000; --sidebar:#0a0a0a; --header:rgba(10,10,10,0.95); --user-msg:#0A84FF; --alfred-msg:#1c1c1e; --text:#fff; --accent:#0A84FF; --border:#333; }
-        /* ... (Keep your themes here) ... */
-        
+        [data-theme="matrix"] { --bg:#000500; --sidebar:#001a00; --header:rgba(0,10,0,0.95); --user-msg:#003300; --alfred-msg:#001a00; --text:#00ff00; --accent:#00ff00; --border:#004400; }
+        [data-theme="cloud"] { --bg:#f0f2f5; --sidebar:#ffffff; --header:rgba(255,255,255,0.95); --user-msg:#007AFF; --alfred-msg:#e4e6eb; --text:#050505; --accent:#007AFF; --border:#ccc; }
+        [data-theme="obsidian"] { --bg:#181818; --sidebar:#212121; --header:rgba(24,24,24,0.95); --user-msg:#7d5fff; --alfred-msg:#303030; --text:#e0e0e0; --accent:#7d5fff; --border:#424242; }
+        [data-theme="ocean"] { --bg: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); --sidebar:#0f172a; --header:rgba(15,23,42,0.95); --user-msg:#0ea5e9; --alfred-msg:#1e293b; --text:#f8fafc; --accent:#38bdf8; --border:#334155; }
+        [data-theme="sunset"] { --bg: linear-gradient(to bottom right, #2d1b2e, #b04b4b); --sidebar:#2d1b2e; --header:rgba(45,27,46,0.95); --user-msg:#ff9f43; --alfred-msg:#4a2b3c; --text:#fff0f5; --accent:#ff9f43; --border:#5e3a4b; }
+        [data-theme="cyberpunk"] { --bg:#0b0b15; --sidebar:#12121f; --header:rgba(11,11,21,0.95); --user-msg:#ff007f; --alfred-msg:#1e1e2e; --text:#00f3ff; --accent:#ff007f; --border:#00f3ff; }
+        [data-theme="forest"] { --bg: linear-gradient(to bottom, #051405, #0b290b); --sidebar:#051405; --header:rgba(5,20,5,0.95); --user-msg:#2ecc71; --alfred-msg:#143614; --text:#d4edda; --accent:#2ecc71; --border:#1e4d1e; }
+        [data-theme="royal"] { --bg: linear-gradient(135deg, #1a0b2e 0%, #340c42 100%); --sidebar:#1a0b2e; --header:rgba(26,11,46,0.95); --user-msg:#ffd700; --alfred-msg:#341a4d; --text:#fff; --accent:#ffd700; --border:#5e2a85; }
+        [data-theme="retro"] { --bg:#dcd3b8; --sidebar:#d3c9a6; --header:rgba(220,211,184,0.95); --user-msg:#8b4513; --alfred-msg:#c4baa0; --text:#3e2723; --accent:#8b4513; --border:#8d6e63; }
+
         * { box-sizing: border-box; }
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: var(--bg); color: var(--text); margin: 0; height: 100dvh; overflow: hidden; display: flex; flex-direction: column; transition: background 0.5s ease, color 0.3s ease; }
-        #offline-banner { position: fixed; top: 0; left: 0; width: 100%; height: 40px; background: #ff3b30; color: white; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px; z-index: 1000; transform: translateY(-100%); transition: transform 0.3s ease; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
+            background: var(--bg); background-attachment: fixed;
+            color: var(--text); margin: 0; height: 100dvh; 
+            overflow: hidden; display: flex; flex-direction: column; 
+            transition: background 0.5s ease, color 0.3s ease; 
+        }
+        
+        #offline-banner {
+            position: fixed; top: 0; left: 0; width: 100%; height: 40px;
+            background: #ff3b30; color: white; display: flex; align-items: center; justify-content: center;
+            font-weight: bold; font-size: 14px; z-index: 1000;
+            transform: translateY(-100%); transition: transform 0.3s ease;
+        }
         #offline-banner.active { transform: translateY(0); }
+
         .header { display: flex; align-items: center; justify-content: space-between; padding: 15px 20px; background: var(--header); backdrop-filter: blur(20px); border-bottom: 1px solid var(--border); position: fixed; top: 0; left: 0; right: 0; z-index: 100; transition: top 0.3s; }
         .offline-mode .header { top: 40px; }
+
         .header-title { font-weight: 700; font-size: 16px; letter-spacing: 1px; text-shadow: 0 0 10px rgba(0,0,0,0.5); }
         .icon-btn { background: none; border: none; color: var(--accent); font-size: 20px; cursor: pointer; padding: 5px; transition: 0.2s; }
         .icon-btn:hover { transform: scale(1.1); text-shadow: 0 0 8px var(--accent); }
+        
         #chat-wrapper { flex: 1; overflow-y: auto; padding: 80px 15px 100px 15px; display: flex; flex-direction: column; gap: 15px; scroll-behavior: smooth; }
-        .message { max-width: 88%; padding: 12px 16px; border-radius: 18px; font-size: 15px; line-height: 1.5; word-wrap: break-word; position: relative; animation: slideUpFade 0.3s ease-out forwards; opacity: 0; transform: translateY(10px); }
+        
+        .message { 
+            max-width: 88%; padding: 12px 16px; border-radius: 18px; font-size: 15px; line-height: 1.5; word-wrap: break-word; position: relative;
+            animation: slideUpFade 0.3s ease-out forwards; opacity: 0; transform: translateY(10px);
+        }
         @keyframes slideUpFade { to { opacity: 1; transform: translateY(0); } }
+
         .user { align-self: flex-end; background-color: var(--user-msg); color: #fff; border-bottom-right-radius: 4px; }
         .alfred { align-self: flex-start; background-color: var(--alfred-msg); color: var(--text); border-bottom-left-radius: 4px; border: 1px solid rgba(255,255,255,0.05); }
+        
+        /* STRONG ANIMATION */
         .typing-dots { display: inline-flex; gap: 4px; padding: 0 5px; }
-        .typing-dots span { width: 8px; height: 8px; background: var(--accent); border-radius: 50%; animation: bounce 1s infinite ease-in-out both; margin: 0 2px; }
+        .typing-dots span {
+            width: 8px; height: 8px; background: var(--accent); border-radius: 50%;
+            animation: bounce 1s infinite ease-in-out both; margin: 0 2px;
+        }
         .typing-dots span:nth-child(1) { animation-delay: -0.32s; }
         .typing-dots span:nth-child(2) { animation-delay: -0.16s; }
         @keyframes bounce { 0%, 100% { transform: translateY(0); opacity: 0.5; } 50% { transform: translateY(-10px); opacity: 1; } }
+        
         .message img, .message video { max-width: 100%; border-radius: 10px; margin: 10px 0; display: block; }
         .message pre { background: rgba(0,0,0,0.3); padding: 35px 10px 10px 10px; border-radius: 8px; overflow-x: auto; margin: 10px 0; border: 1px solid var(--border); position: relative; }
         .message code { font-family: 'Menlo', monospace; font-size: 13px; }
         .copy-btn { position: absolute; top: 5px; right: 5px; background: rgba(255,255,255,0.1); border: 1px solid var(--border); color: var(--text); padding: 4px 8px; border-radius: 4px; font-size: 12px; cursor: pointer; transition: 0.2s; }
         .copy-btn:hover { background: var(--accent); color: white; }
+
         .chart-container { position: relative; height: 300px; width: 100%; margin: 15px 0; background: rgba(255,255,255,0.02); border-radius: 15px; padding: 10px; border: 1px solid var(--border); }
+
         .input-area { position: fixed; bottom: 0; left: 0; right: 0; padding: 10px 15px; padding-bottom: max(10px, env(safe-area-inset-bottom)); background: var(--header); backdrop-filter: blur(20px); display: flex; align-items: center; gap: 10px; border-top: 1px solid var(--border); z-index: 200; transition: opacity 0.3s; }
         .input-area.disabled { opacity: 0.5; pointer-events: none; filter: grayscale(1); }
+
         input[type="text"] { flex: 1; min-width: 0; background: var(--alfred-msg); border: 1px solid var(--border); border-radius: 20px; padding: 12px 15px; color: var(--text); font-size: 16px; outline: none; transition: 0.3s; }
         input[type="text"]:focus { border-color: var(--accent); box-shadow: 0 0 10px rgba(10,132,255,0.1); }
+        
         .action-main-btn { background: var(--accent); border: none; border-radius: 50%; width: 40px; height: 40px; color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; transition: 0.2s; box-shadow: 0 4px 10px rgba(0,0,0,0.2); }
         .action-main-btn:hover { transform: scale(1.05); }
         .action-main-btn.stop-mode { background: #ff3b30; animation: none; }
         .mic-active { background-color: #ff3b30; animation: pulse 1.5s infinite; }
         @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(255, 59, 48, 0.7); } 70% { box-shadow: 0 0 0 10px rgba(255, 59, 48, 0); } 100% { box-shadow: 0 0 0 0 rgba(255, 59, 48, 0); } }
+
         .file-preview { max-width: 150px; padding: 10px; background: rgba(255,255,255,0.1); border-radius: 10px; margin-top: 5px; border: 1px solid var(--border); display: flex; align-items: center; gap: 10px; font-size: 12px; }
         .img-preview { max-width: 100%; border-radius: 5px; }
+        
         .sidebar { position: fixed; top: 0; left: 0; width: 280px; height: 100%; background: var(--sidebar); z-index: 300; transform: translateX(-100%); transition: 0.3s ease; border-right: 1px solid var(--border); display: flex; flex-direction: column; box-shadow: 2px 0 20px rgba(0,0,0,0.5); }
         .sidebar.open { transform: translateX(0); }
         .sidebar-header { padding: 20px; font-size: 18px; font-weight: bold; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+        
         .history-list { padding: 10px; overflow-y: auto; flex: 1; }
         .history-item { padding: 15px; margin-bottom: 8px; background: var(--alfred-msg); border-radius: 8px; font-size: 14px; color: var(--text); display: flex; justify-content: space-between; align-items: center; cursor: pointer; border: 1px solid transparent; transition: 0.2s; }
         .history-item:hover { border-color: var(--accent); background: rgba(255,255,255,0.05); }
@@ -62,30 +106,36 @@
         .history-del { color: #ff3b30; opacity: 0; transition: 0.2s; padding: 5px; }
         .history-item:hover .history-del { opacity: 1; }
         .history-del:hover { transform: scale(1.2); }
+
         .theme-btn { padding: 15px; margin: 20px; text-align: center; background: var(--alfred-msg); border-radius: 10px; cursor: pointer; font-weight: bold; color: var(--accent); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; gap: 10px; transition: 0.2s; }
         .theme-btn:hover { background: var(--accent); color: white; }
+
         .overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 250; display: none; backdrop-filter: blur(3px); }
         .overlay.show { display: block; }
+
         #fileInput { display: none; }
         #loginScreen { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: var(--bg); z-index: 9999; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--text); }
         .login-form { display: flex; flex-direction: column; gap: 15px; width: 280px; }
         .login-input { padding: 15px; border-radius: 10px; border: 1px solid var(--border); background: var(--alfred-msg); color: var(--text); font-size: 16px; text-align: center; outline: none; width: 100%; }
         .login-btn { padding: 12px; background: var(--accent); color: white; border: none; border-radius: 25px; font-size: 16px; cursor: pointer; width: 100%; }
+
         #themeModal { position: fixed; bottom: 0; left: 0; width: 100%; background: var(--header); border-top-left-radius: 20px; border-top-right-radius: 20px; z-index: 400; transform: translateY(100%); transition: 0.3s; padding: 20px; border-top: 1px solid var(--border); max-height: 60vh; overflow-y: auto; }
         #themeModal.open { transform: translateY(0); }
         .theme-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
         .theme-option { padding: 15px; border: 1px solid var(--border); border-radius: 10px; cursor: pointer; text-align: center; background: var(--alfred-msg); font-size: 14px; transition: 0.2s; }
         .theme-option:hover { border-color: var(--accent); transform: translateY(-2px); }
+        
         .toggle-btn { font-size: 18px; opacity: 0.5; background: none; border: none; cursor: pointer; padding: 0 5px; color: var(--accent); transition: 0.2s; }
         .toggle-btn.on { opacity: 1; text-shadow: 0 0 10px var(--accent); transform: scale(1.1); }
         .file-card { display: flex; align-items: center; gap: 10px; background: rgba(255,255,255,0.1); padding: 10px; border-radius: 10px; margin-top: 10px; border: 1px solid var(--border); text-decoration: none; color: var(--text); }
+        
+        /* MOBILE BTN FIX */
         .msg-actions { position: absolute; bottom: -20px; right: 0; display: flex; gap: 8px; opacity: 0; transition: 0.2s; }
         .message:hover .msg-actions { opacity: 1; }
         @media (hover: none) { .msg-actions { opacity: 1; bottom: -25px; } }
         .action-mini-btn { background: var(--header); border: 1px solid var(--border); color: var(--text); border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; font-size: 10px; cursor: pointer; }
         .action-mini-btn:hover { background: var(--accent); color: #fff; }
         
-        /* MULTI FILE PREVIEW CONTAINER */
         .multi-file-preview { display: flex; gap: 10px; flex-wrap: wrap; }
     </style>
 </head>
@@ -160,7 +210,6 @@
         
         let chats = JSON.parse(localStorage.getItem('alfred_chats') || "[]");
         let currentChatId = null;
-        // CHANGED TO ARRAY
         let currentFiles = [];
         let isVoiceOn = false, isThinkingOn = false;
         let abortController = null, isProcessing = false;
@@ -202,7 +251,12 @@
             recognition.onend = () => { if(!isProcessing) document.getElementById('actionBtn').classList.remove('mic-active'); updateButtonState(); };
         }
 
-        function init() { if(chats.length>0) loadChat(chats[0].id); else startNewChat(); renderHistory(); updateButtonState(); }
+        function init() { 
+            if(chats.length > 0) loadChat(chats[0].id); 
+            else startNewChat(); 
+            renderHistory(); 
+            updateButtonState(); 
+        }
 
         function toggleSidebar() { document.getElementById('sidebar').classList.toggle('open'); document.getElementById('overlay').classList.toggle('show'); }
         function toggleThemes() { document.getElementById('themeModal').classList.toggle('open'); if(document.getElementById('sidebar').classList.contains('open')) toggleSidebar(); }
@@ -315,33 +369,23 @@
             }
         }
 
-        // --- UPDATED: HANDLE MULTIPLE FILES ---
         function handleFile(input) {
             playClick();
             const files = input.files;
             if (!files.length) return;
-            
-            currentFiles = []; // Clear previous
-            const previews = document.createElement('div');
-            previews.className = 'multi-file-preview';
-            
+            currentFiles = []; 
+            const previews = document.createElement('div'); previews.className = 'multi-file-preview';
             Array.from(files).forEach(file => {
                 const reader = new FileReader();
                 reader.onload = (e) => {
                     const base64 = e.target.result.split(',')[1];
                     currentFiles.push({ data: base64, mime_type: file.type });
-                    
                     let previewHtml = "";
                     if (file.type.startsWith('image/')) { previewHtml = `<div class="file-preview"><img src="${e.target.result}" class="img-preview"></div>`; } 
                     else { previewHtml = `<div class="file-preview"><i class="fa-solid fa-file"></i> ${file.name}</div>`; }
-                    
-                    // Simply append to chat for now (user sees what they attached)
                     const wrapper = document.getElementById('chat-wrapper');
                     const div = document.createElement('div'); div.className = 'message user';
-                    div.innerHTML = previewHtml;
-                    wrapper.appendChild(div);
-                    scrollToBottom();
-                    updateButtonState();
+                    div.innerHTML = previewHtml; wrapper.appendChild(div); scrollToBottom(); updateButtonState();
                 };
                 reader.readAsDataURL(file);
             });
@@ -361,41 +405,74 @@
             const chat = chats.find(c => c.id === currentChatId); 
             const historyContext = chat.messages.slice(-6).map(m => ({ role: m.sender, content: m.text }));
             
-            const loadingDiv = document.createElement('div'); loadingDiv.className = 'message alfred'; loadingDiv.id = 'loading';
-            loadingDiv.innerHTML = `<div class="typing-dots"><span></span><span></span><span></span></div>`; 
+            const loadingDiv = document.createElement('div'); loadingDiv.className = 'message alfred'; 
+            loadingDiv.id = 'current-stream'; 
+            loadingDiv.innerHTML = '<span class="typing-dots"><span></span><span></span><span></span></span>';
             document.getElementById('chat-wrapper').appendChild(loadingDiv);
             scrollToBottom(); 
 
             abortController = new AbortController(); const signal = abortController.signal;
+            let fullText = "";
 
             try {
                 const res = await fetch(API_URL, {
                     method: 'POST', 
                     headers: { 'Content-Type': 'application/json', 'x-alfred-auth': secretKey },
                     body: JSON.stringify({ 
-                        command: text, 
-                        files: currentFiles, // SEND ARRAY
-                        speak: isVoiceOn, 
-                        thinking_mode: isThinkingOn, 
-                        history: historyContext 
+                        command: text, files: currentFiles, speak: isVoiceOn, 
+                        thinking_mode: isThinkingOn, history: historyContext 
                     }),
                     signal: signal
                 });
 
-                if (res.status === 401) { alert("SECURITY ALERT: Access Denied by Server."); }
-                else {
-                    const data = await res.json();
-                    playReceive();
-                    addMessage(data.response, 'alfred', true, data.audio, data.file, data.chart_data);
-                    if (data.audio) new Audio("data:audio/mp3;base64," + data.audio).play();
+                if (res.status === 401) { alert("Access Denied."); return; }
+
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder();
+                loadingDiv.innerHTML = ""; 
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    const chunk = decoder.decode(value, { stream: true });
+                    const lines = chunk.split('\n');
+                    for (const line of lines) {
+                        if (!line.trim()) continue;
+                        try {
+                            const data = JSON.parse(line);
+                            if (data.type === 'text') {
+                                playReceive(); fullText += data.content;
+                                loadingDiv.innerHTML = marked.parse(fullText);
+                                loadingDiv.querySelectorAll('pre code').forEach((block) => hljs.highlightElement(block));
+                                scrollToBottom();
+                            } else if (data.type === 'meta') {
+                                if (data.file) {
+                                    const fileLink = document.createElement('a'); 
+                                    if(data.file.name.includes(".jpg")) {
+                                        const img = document.createElement('img'); img.src = "data:image/jpeg;base64," + data.file.data; loadingDiv.appendChild(img);
+                                    } else {
+                                        fileLink.href = "data:application/octet-stream;base64," + data.file.data; fileLink.download = data.file.name; fileLink.className = 'file-card';
+                                        fileLink.innerHTML = `<i class="fa-solid fa-file-arrow-down"></i> ${data.file.name}`; loadingDiv.appendChild(fileLink);
+                                    }
+                                }
+                                if (data.chart) {
+                                    const chartId = "chart_" + Date.now();
+                                    const chartContainer = document.createElement('div'); chartContainer.className = "chart-container";
+                                    chartContainer.innerHTML = `<canvas id="${chartId}"></canvas>`; loadingDiv.appendChild(chartContainer);
+                                    renderChart(chartId, data.chart);
+                                }
+                                if (data.audio) {
+                                    const audio = document.createElement('audio'); audio.controls = true; audio.src = "data:audio/mp3;base64," + data.audio; loadingDiv.appendChild(audio); audio.play().catch(e=>{});
+                                }
+                                const chat = chats.find(c => c.id === currentChatId); 
+                                chat.messages.push({ text: fullText, sender: 'alfred', audio: data.audio, file: data.file, chartData: data.chart });
+                                saveChats();
+                            }
+                        } catch (e) { console.log("Stream Parse Error", e); }
+                    }
                 }
-            } catch (e) {
-                if (e.name !== 'AbortError') addMessage("Connection Error.", 'alfred', false);
-            } finally {
-                if(document.getElementById('loading')) document.getElementById('loading').remove();
-                currentFiles = []; // Reset files
-                isProcessing = false; abortController = null; updateButtonState();
-            }
+            } catch (e) { if (e.name !== 'AbortError') loadingDiv.innerText = "Connection Error."; } 
+            finally { loadingDiv.id = ''; currentFiles = []; isProcessing = false; abortController = null; updateButtonState(); }
         }
         
         function saveChats() { localStorage.setItem('alfred_chats', JSON.stringify(chats)); renderHistory(); }
