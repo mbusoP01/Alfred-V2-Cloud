@@ -24,7 +24,7 @@ from docx import Document
 from pptx import Presentation
 from pptx.util import Pt as PptxPt, Inches
 from pptx.dml.color import RGBColor as PptxColor
-from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
+from pptx.enum.text import PP_ALIGN
 from pptx.enum.shapes import MSO_SHAPE
 from bs4 import BeautifulSoup
 from youtube_transcript_api import YouTubeTranscriptApi
@@ -101,19 +101,15 @@ User: Mbuso (Sir). Location: South Africa.
 
 2. IF FILE REQUESTED (PPT/DOC):
    - Output raw content inside: <<<FILE_START>>> ... <<<FILE_END>>>
-   - For PPT, format EXACTLY like this:
-     Title: The Presentation Title
-     Slide 1: Slide Title Here
-     - Bullet point one
-     - Bullet point two
-     Slide 2: Next Slide Title
-     - Info here
+   - For PPT, use "Slide X:" headers.
+   - Do NOT include labels like "Content:" or "Body:" inside the slides. Just give the bullet points.
 
 3. IF IMAGE REQUESTED:
    - Reply: "IMAGE_GEN_REQUEST: [Detailed Prompt]"
 
 4. DEFAULT:
-   - Answer using search data.
+   - Answer using search data if provided.
+   - Save facts: <<<MEM_SAVE>>> fact <<<MEM_END>>>.
 """
 
 api_key = os.environ.get("GEMINI_API_KEY")
@@ -192,37 +188,42 @@ def generate_image(prompt):
         except: continue
     return None, None
 
-# --- NEW DESIGNER ENGINE (THE "NEON GLASS" THEME) ---
-def apply_neon_theme(slide, is_title_slide=False):
-    # 1. Main Background (Deep Space Blue)
+# --- THE "IRON MAN" HUD THEME ---
+def apply_tech_theme(slide, is_title_slide=False):
+    # 1. Dark Background
     bg = slide.background
     fill = bg.fill
     fill.solid()
-    fill.fore_color.rgb = PptxColor(5, 5, 16) # #050510
+    fill.fore_color.rgb = PptxColor(5, 5, 16) 
     
-    # 2. Top "Cyber" Bar (Cyan Glow)
-    top_bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0), Inches(0), Inches(10), Inches(0.15))
-    top_bar.fill.solid()
-    top_bar.fill.fore_color.rgb = PptxColor(0, 243, 255) # Neon Cyan
-    top_bar.line.fill.background()
+    # 2. Top & Bottom Bars
+    top = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0), Inches(0), Inches(10), Inches(0.1))
+    top.fill.solid(); top.fill.fore_color.rgb = PptxColor(0, 243, 255); top.line.fill.background()
+    btm = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0), Inches(7.4), Inches(10), Inches(0.1))
+    btm.fill.solid(); btm.fill.fore_color.rgb = PptxColor(188, 19, 254); btm.line.fill.background()
 
-    # 3. Bottom "Retro" Bar (Purple Glow)
-    btm_bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0), Inches(7.35), Inches(10), Inches(0.15))
-    btm_bar.fill.solid()
-    btm_bar.fill.fore_color.rgb = PptxColor(188, 19, 254) # Neon Purple
-    btm_bar.line.fill.background()
+    # 3. Tech Corner Brackets (The HUD Look)
+    # Top Left
+    bracket = slide.shapes.add_shape(MSO_SHAPE.L_SHAPE, Inches(0.2), Inches(0.2), Inches(0.5), Inches(0.5))
+    bracket.fill.solid(); bracket.fill.fore_color.rgb = PptxColor(100, 100, 100); bracket.rotation = 0
+    # Top Right
+    bracket = slide.shapes.add_shape(MSO_SHAPE.L_SHAPE, Inches(9.3), Inches(0.2), Inches(0.5), Inches(0.5))
+    bracket.fill.solid(); bracket.fill.fore_color.rgb = PptxColor(100, 100, 100); bracket.rotation = 90
+    
+    # 4. Glowing Status Dot (Top Right)
+    dot = slide.shapes.add_shape(MSO_SHAPE.OVAL, Inches(9.5), Inches(0.3), Inches(0.15), Inches(0.15))
+    dot.fill.solid(); dot.fill.fore_color.rgb = PptxColor(0, 255, 0) # Green Status
+    dot.line.color.rgb = PptxColor(0, 200, 0)
 
-    # 4. The "Glass Card" Container (Background for Text)
-    # We draw a rounded rectangle in the middle to hold content
+    # 5. Content Card
     if is_title_slide:
         card = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(1), Inches(2), Inches(8), Inches(3.5))
     else:
         card = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.5), Inches(1.2), Inches(9), Inches(5.5))
     
     card.fill.solid()
-    card.fill.fore_color.rgb = PptxColor(30, 30, 46) # Dark Grey/Blue
-    # No transparency support in python-pptx simple fill, so we stick to solid sleek grey
-    card.line.color.rgb = PptxColor(60, 60, 80) # Subtle border
+    card.fill.fore_color.rgb = PptxColor(30, 30, 46)
+    card.line.color.rgb = PptxColor(60, 60, 80)
 
 def create_file(content, ftype):
     try:
@@ -242,64 +243,44 @@ def create_file(content, ftype):
             prs = Presentation()
             slide_chunks = re.split(r'Slide \d+:', content, flags=re.IGNORECASE)
             
-            # --- TITLE SLIDE ---
-            title_text = slide_chunks[0].replace("Title:", "").strip()
-            if not title_text: title_text = "Alfred Intelligence"
+            # TITLE SLIDE
+            title_text = slide_chunks[0].replace("Title:", "").strip() or "Alfred Intelligence"
+            s1 = prs.slides.add_slide(prs.slide_layouts[6])
+            apply_tech_theme(s1, is_title_slide=True)
             
-            s1 = prs.slides.add_slide(prs.slide_layouts[6]) # Blank
-            apply_neon_theme(s1, is_title_slide=True)
-            
-            # Title Text (Centered on Card)
-            title_box = s1.shapes.add_textbox(Inches(1.2), Inches(2.5), Inches(7.6), Inches(2))
-            title_frame = title_box.text_frame
-            title_frame.word_wrap = True
-            p = title_frame.add_paragraph()
+            tb = s1.shapes.add_textbox(Inches(1.2), Inches(2.5), Inches(7.6), Inches(2))
+            p = tb.text_frame.add_paragraph()
             p.text = title_text
-            p.font.size = PptxPt(44)
-            p.font.bold = True
-            p.font.color.rgb = PptxColor(255, 255, 255)
-            p.alignment = PP_ALIGN.CENTER
+            p.font.size = PptxPt(44); p.font.bold = True; p.font.color.rgb = PptxColor(255,255,255); p.alignment = PP_ALIGN.CENTER
             
-            # Subtitle
-            sub_box = s1.shapes.add_textbox(Inches(1.2), Inches(4), Inches(7.6), Inches(1))
-            sub_frame = sub_box.text_frame
-            p = sub_frame.add_paragraph()
+            sb = s1.shapes.add_textbox(Inches(1.2), Inches(4), Inches(7.6), Inches(1))
+            p = sb.text_frame.add_paragraph()
             p.text = f"GENERATED BY ALFRED | {datetime.now().strftime('%Y-%m-%d')}"
-            p.font.size = PptxPt(14)
-            p.font.color.rgb = PptxColor(0, 243, 255) # Cyan
-            p.alignment = PP_ALIGN.CENTER
+            p.font.size = PptxPt(14); p.font.color.rgb = PptxColor(0,243,255); p.alignment = PP_ALIGN.CENTER
 
-            # --- CONTENT SLIDES ---
+            # CONTENT SLIDES
             for chunk in slide_chunks[1:]:
                 if not chunk.strip(): continue
                 lines = chunk.strip().split('\n')
                 header = lines[0].strip()
                 body_lines = [line.strip() for line in lines[1:] if line.strip() and not line.lower().startswith(("content:", "body:"))]
                 
-                slide = prs.slides.add_slide(prs.slide_layouts[6]) # Blank
-                apply_neon_theme(slide, is_title_slide=False)
+                slide = prs.slides.add_slide(prs.slide_layouts[6])
+                apply_tech_theme(slide, is_title_slide=False)
                 
-                # Slide Title (Top Left)
                 t_box = slide.shapes.add_textbox(Inches(0.8), Inches(0.4), Inches(8.4), Inches(0.8))
-                tf = t_box.text_frame
-                p = tf.add_paragraph()
+                p = t_box.text_frame.add_paragraph()
                 p.text = header
-                p.font.size = PptxPt(32)
-                p.font.bold = True
-                p.font.color.rgb = PptxColor(255, 255, 255)
+                p.font.size = PptxPt(32); p.font.bold = True; p.font.color.rgb = PptxColor(255,255,255)
                 
-                # Slide Body (Inside the Card)
                 b_box = slide.shapes.add_textbox(Inches(1), Inches(1.5), Inches(8), Inches(5))
-                bf = b_box.text_frame
-                bf.word_wrap = True
+                bf = b_box.text_frame; bf.word_wrap = True
                 
                 for line in body_lines:
                     p = bf.add_paragraph()
                     clean = line.lstrip("-*• ").strip()
                     p.text = f"•  {clean}"
-                    p.font.size = PptxPt(20)
-                    p.font.color.rgb = PptxColor(220, 220, 220)
-                    p.space_after = PptxPt(14) # Breathing room
+                    p.font.size = PptxPt(20); p.font.color.rgb = PptxColor(220,220,220); p.space_after = PptxPt(14)
 
             prs.save(buf)
             return base64.b64encode(buf.getvalue()).decode('utf-8'), f"{fname}.pptx"
