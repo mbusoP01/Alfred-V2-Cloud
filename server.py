@@ -87,7 +87,7 @@ def save_memory_fact(fact):
 
 pull_memory_from_cloud()
 
-# --- SYSTEM PROMPT ---
+# --- SYSTEM PROMPT (REASONING + PROBLEM SOLVING) ---
 def get_system_instructions():
     return f"""
 You are Alfred, an elite intelligent assistant.
@@ -96,11 +96,22 @@ User: Mbuso (Sir). Location: South Africa.
 *** MEMORY ***
 {load_memory()}
 
-*** PROTOCOL ***
-1. IMAGE: Reply "IMAGE_GEN_REQUEST: [Detailed Prompt]"
-2. CHART: JSON in <<<CHART_START>>> ... <<<CHART_END>>>
-3. FILE: Content in <<<FILE_START_PPTX>>> or <<<FILE_START_DOCX>>>
-4. DEFAULT: Answer normally. Save facts: <<<MEM_SAVE>>> fact <<<MEM_END>>>
+*** REASONING ENGINE ***
+Before answering, analyze the User's Intent:
+1. If they give code: They want debugging or optimization.
+2. If they ask a vague question: Infer context from history or ask for clarification.
+3. If they give a task: Break it down into steps.
+
+*** OUTPUT PROTOCOLS ***
+1. VISUALS:
+   - Charts: <<<CHART_START>>> JSON <<<CHART_END>>>
+   - Images: "IMAGE_GEN_REQUEST: [Prompt]"
+2. FILES:
+   - PPT/DOC: <<<FILE_START_PPTX>>> or <<<FILE_START_DOCX>>> ... <<<FILE_END>>>
+   - PPT Format: "Title: X", "Slide 1: Title", "- Bullet". No "Content:" labels.
+3. DEFAULT:
+   - Concise, intelligent answers.
+   - Save new permanent facts: <<<MEM_SAVE>>> fact <<<MEM_END>>>.
 """
 
 api_key = os.environ.get("GEMINI_API_KEY")
@@ -114,10 +125,14 @@ class ChatMessage(BaseModel):
     role: str
     content: str
 
+# New Model for Multiple Files
+class UploadedFile(BaseModel):
+    data: str
+    mime_type: str
+
 class UserRequest(BaseModel):
     command: str
-    file_data: Optional[str] = None
-    mime_type: Optional[str] = None
+    files: List[UploadedFile] = [] # NOW ACCEPTS A LIST
     speak: bool = False
     thinking_mode: bool = False
     history: List[ChatMessage] = []
@@ -283,7 +298,13 @@ async def process_command(request: UserRequest, x_alfred_auth: Optional[str] = H
         elif "pdf" in request.command.lower() or "doc" in request.command.lower(): prompt += "\n\n[SYSTEM: Output content in <<<FILE_START_DOCX>>> ... <<<FILE_END>>> tags.]"
 
         parts = [prompt]
-        if request.file_data: parts.append(types.Part.from_bytes(data=base64.b64decode(request.file_data), mime_type=request.mime_type))
+        
+        # --- MULTI-FILE HANDLING ---
+        if request.files:
+            for f in request.files:
+                try:
+                    parts.append(types.Part.from_bytes(data=base64.b64decode(f.data), mime_type=f.mime_type))
+                except: pass
 
         chat = client.chats.create(model='gemini-2.0-flash-thinking-exp-01-21' if request.thinking_mode else 'gemini-2.0-flash', history=hist, config=types.GenerateContentConfig(system_instruction=get_system_instructions(), tools=[types.Tool(google_search=types.GoogleSearch())]))
         loop = asyncio.get_event_loop()
@@ -298,7 +319,6 @@ async def process_command(request: UserRequest, x_alfred_auth: Optional[str] = H
                 response = re.sub(r'<<<MEM_SAVE>>>.*?<<<MEM_END>>>', '', response, flags=re.DOTALL).strip()
             except: pass
 
-        # REGEX MATCH FOR IMAGE REQUEST (Fixes markdown/spacing issues)
         img_match = re.search(r'IMAGE_GEN_REQUEST:\s*(.*)', response, re.IGNORECASE)
         if img_match:
             p = img_match.group(1).strip()
@@ -306,7 +326,6 @@ async def process_command(request: UserRequest, x_alfred_auth: Optional[str] = H
             if gen_file: response = "Here is the visual, Sir."
             else: response = "Visual Engine Offline (All Mirrors Busy)."
 
-        # FILE HANDLING
         content, ftype = None, "txt"
         if "<<<FILE_START_PPTX>>>" in response: content = response.split("<<<FILE_START_PPTX>>>")[1].split("<<<FILE_END>>>")[0].strip(); ftype = "pptx"
         elif "<<<FILE_START_DOCX>>>" in response: content = response.split("<<<FILE_START_DOCX>>>")[1].split("<<<FILE_END>>>")[0].strip(); ftype = "docx"
@@ -314,7 +333,6 @@ async def process_command(request: UserRequest, x_alfred_auth: Optional[str] = H
             gen_file, gen_name = create_file(content, ftype)
             response = f"{ftype.upper()} Document successfully generated, Sir."
 
-        # CHART HANDLING
         if "<<<CHART_START>>>" in response:
             try:
                 json_str = response.split("<<<CHART_START>>>")[1].split("<<<CHART_END>>>")[0].strip().replace("```json", "").replace("```", "").strip()
