@@ -83,7 +83,7 @@ def save_memory_fact(fact):
 
 pull_memory_from_cloud()
 
-# --- SYSTEM PROMPT (REFINED FOR CHARTS/SLIDES) ---
+# --- SYSTEM PROMPT (SIMPLIFIED & STRICT) ---
 def get_system_instructions():
     return f"""
 You are Alfred, an elite intelligent assistant.
@@ -92,22 +92,22 @@ User: Mbuso (Sir). Location: South Africa.
 *** MEMORY ***
 {load_memory()}
 
-*** STRICT PROTOCOL ***
+*** CRITICAL PROTOCOLS ***
+1. IF CHART REQUESTED:
+   - Output ONLY JSON data inside these exact tags: <<<CHART_START>>> ... <<<CHART_END>>>
+   - Do NOT use markdown blocks (```json). Do NOT add conversational text.
+   - Example: <<<CHART_START>>> {{"type": "bar", "labels": ["A"], "data": [10]}} <<<CHART_END>>>
 
-1. CHARTS:
-   - Output PURE JSON inside tags. Do NOT use Markdown code blocks (no ```json).
-   - Format: <<<CHART_START>>> {{"type": "line", "title": "Chart Title", "labels": ["A", "B"], "data": [10, 20]}} <<<CHART_END>>>
+2. IF FILE REQUESTED (PPT/DOC):
+   - You act as the backend generator. Do NOT summarize the content in chat.
+   - Output the raw content inside: <<<FILE_START>>> ... <<<FILE_END>>>
+   - For PPT, use "Slide X:" headers.
 
-2. FILES (PPT/DOC):
-   - You act as the Content Generator.
-   - For PowerPoint, structure your response explicitly with "Slide 1:", "Slide 2:", etc.
-   - Format: <<<FILE_START>>> Title: The Topic\n\nSlide 1: Introduction\n- Point A\n- Point B\n\nSlide 2: Details\n- Point C <<<FILE_END>>>
-
-3. IMAGES:
+3. IF IMAGE REQUESTED:
    - Reply: "IMAGE_GEN_REQUEST: [Detailed Prompt]"
 
-4. GENERAL:
-   - Use search data if provided.
+4. DEFAULT:
+   - Answer the user's question using search data if provided.
    - Save facts: <<<MEM_SAVE>>> fact <<<MEM_END>>>.
 """
 
@@ -135,7 +135,7 @@ def perform_web_search(query):
     try:
         results = DDGS().text(query, max_results=3)
         if not results: return None
-        summary = "REAL-TIME SEARCH DATA (Use this to build Chart/Answer):\n"
+        summary = "REAL-TIME SEARCH DATA:\n"
         for r in results: summary += f"- {r['title']}: {r['body']}\n"
         return summary
     except: return None
@@ -187,7 +187,7 @@ def generate_image(prompt):
         except: continue
     return None, None
 
-# --- ARCHITECT (SMART SLIDE PARSER) ---
+# --- ARCHITECT (PPT/FILE ENGINE) ---
 def create_file(content, ftype):
     try:
         buf = io.BytesIO()
@@ -210,12 +210,10 @@ def create_file(content, ftype):
         
         elif ftype == "pptx":
             prs = Presentation()
-            
-            # 1. Parse content by splitting "Slide X:"
-            # Regex splits by "Slide" followed by number and colon/newline
+            # Split by "Slide X:" pattern
             slide_chunks = re.split(r'Slide \d+:', content, flags=re.IGNORECASE)
             
-            # Title Slide (First chunk usually contains the title)
+            # Title Slide
             title_text = slide_chunks[0].replace("Title:", "").strip()
             if not title_text: title_text = "Alfred Intelligence Presentation"
             
@@ -226,22 +224,18 @@ def create_file(content, ftype):
             s1.placeholders[1].text = f"Generated for Sir\n{datetime.now().strftime('%Y-%m-%d')}"
             s1.placeholders[1].text_frame.paragraphs[0].font.color.rgb = PptxColor(200, 200, 200)
 
-            # Loop through the rest of the slides
+            # Content Slides
             for chunk in slide_chunks[1:]:
                 if not chunk.strip(): continue
-                
                 lines = chunk.strip().split('\n')
-                header = lines[0].strip() # First line is slide title
-                body = "\n".join(lines[1:]).strip() # Rest is bullets
+                header = lines[0].strip()
+                body = "\n".join(lines[1:]).strip()
                 
                 slide = prs.slides.add_slide(prs.slide_layouts[1])
                 slide.background.fill.solid(); slide.background.fill.fore_color.rgb = PptxColor(20, 20, 20)
-                
-                # Title
                 slide.shapes.title.text = header
                 slide.shapes.title.text_frame.paragraphs[0].font.color.rgb = PptxColor(10, 132, 255)
                 
-                # Body
                 tf = slide.placeholders[1].text_frame
                 tf.text = body
                 for p in tf.paragraphs:
@@ -254,9 +248,7 @@ def create_file(content, ftype):
         elif ftype == "txt":
             return base64.b64encode(content.encode('utf-8')).decode('utf-8'), f"{fname}.txt"
             
-    except Exception as e:
-        print(f"File Gen Error: {e}")
-        return None, None
+    except: return None, None
 
 @app.post("/command")
 async def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(None)):
@@ -270,16 +262,24 @@ async def process_command(request: UserRequest, x_alfred_auth: Optional[str] = H
         ctx = ""
         scraped = get_url_content(request.command)
         if scraped: ctx += f"\n{scraped}\n"
+        # Only search if NO URL provided
         elif any(x in request.command.lower() for x in ["search", "find", "news", "price", "weather", "graph", "chart"]):
             search_res = perform_web_search(request.command)
             if search_res: ctx += f"\n{search_res}\n"
 
-        prompt = f"[Time: {sa_time}] {ctx} \nUser: {request.command}"
+        prompt = f"[Time: {sa_time}] {ctx} \nUser Query: {request.command}"
+        
+        # --- THE HAMMER: POST-CONTEXT INJECTION ---
+        # This appends instructions at the VERY END, so the model obeys them over the search data.
         
         if "presentation" in request.command.lower() or "ppt" in request.command.lower():
-            prompt += "\n[SYSTEM: Structure response as 'Title: X', then 'Slide 1: Title', 'Slide 2: Title'. Wrap in <<<FILE_START>>>.]"
-        if "chart" in request.command.lower() or "graph" in request.command.lower():
-            prompt += "\n[SYSTEM: Output strict JSON in <<<CHART_START>>> tags. NO MARKDOWN.]"
+            prompt += "\n\n[SYSTEM COMMAND: User wants a PPT. You MUST output the content wrapped in <<<FILE_START>>> ... <<<FILE_END>>>. Do not summarize the search data in chat. JUST CREATE THE FILE CONTENT.]"
+            
+        elif "chart" in request.command.lower() or "graph" in request.command.lower():
+            prompt += "\n\n[SYSTEM COMMAND: User wants a Chart. You MUST output JSON data wrapped in <<<CHART_START>>> ... <<<CHART_END>>>. Do not chat. Do not use Markdown blocks.]"
+        
+        elif "pdf" in request.command.lower() or "doc" in request.command.lower():
+            prompt += "\n\n[SYSTEM COMMAND: User wants a Document. Output content in <<<FILE_START>>> ... <<<FILE_END>>>.]"
 
         parts = [prompt]
         if request.file_data: parts.append(types.Part.from_bytes(data=base64.b64decode(request.file_data), mime_type=request.mime_type))
@@ -291,6 +291,9 @@ async def process_command(request: UserRequest, x_alfred_auth: Optional[str] = H
         
         audio, gen_file, gen_name, chart_data = None, None, None, None
         
+        # --- CLEANUP AND EXTRACT ---
+        
+        # 1. Memory
         if "<<<MEM_SAVE>>>" in response:
             try:
                 fact = response.split("<<<MEM_SAVE>>>")[1].split("<<<MEM_END>>>")[0].strip()
@@ -298,16 +301,21 @@ async def process_command(request: UserRequest, x_alfred_auth: Optional[str] = H
                 response = re.sub(r'<<<MEM_SAVE>>>.*?<<<MEM_END>>>', '', response, flags=re.DOTALL).strip()
             except: pass
 
+        # 2. Charts (Improved Regex to catch Markdown blocks)
         if "<<<CHART_START>>>" in response:
             try:
+                # Extract content between tags
                 json_str = response.split("<<<CHART_START>>>")[1].split("<<<CHART_END>>>")[0].strip()
-                # Clean markdown if AI disobeyed (fixes the visual glitch)
+                # Clean Markdown code blocks if the AI messed up
                 json_str = json_str.replace("```json", "").replace("```", "").strip()
                 chart_data = json.loads(json_str)
+                # Remove from chat text
                 response = re.sub(r'<<<CHART_START>>>.*?<<<CHART_END>>>', '', response, flags=re.DOTALL).strip()
-                if not response.strip(): response = "Visual analysis complete."
-            except: pass
+                if not response.strip(): response = "Here is the visualization, Sir."
+            except Exception as e:
+                print(f"Chart Parse Error: {e}")
 
+        # 3. Files
         if "<<<FILE_START>>>" in response:
             try:
                 cnt = response.split("<<<FILE_START>>>")[1].split("<<<FILE_END>>>")[0].strip()
@@ -316,7 +324,7 @@ async def process_command(request: UserRequest, x_alfred_auth: Optional[str] = H
                 elif "pdf" in request.command.lower(): ftype = "pdf"
                 
                 gen_file, gen_name = create_file(cnt, ftype)
-                response = "File manufactured, Sir."
+                response = "File successfully generated, Sir."
             except: pass
             
         elif "IMAGE_GEN_REQUEST:" in response:
