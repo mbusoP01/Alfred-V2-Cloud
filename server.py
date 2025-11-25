@@ -83,7 +83,7 @@ def save_memory_fact(fact):
 
 pull_memory_from_cloud()
 
-# --- SYSTEM PROMPT (SIMPLIFIED & STRICT) ---
+# --- SYSTEM PROMPT ---
 def get_system_instructions():
     return f"""
 You are Alfred, an elite intelligent assistant.
@@ -92,22 +92,22 @@ User: Mbuso (Sir). Location: South Africa.
 *** MEMORY ***
 {load_memory()}
 
-*** CRITICAL PROTOCOLS ***
+*** STRICT PROTOCOL ***
+
 1. IF CHART REQUESTED:
    - Output ONLY JSON data inside these exact tags: <<<CHART_START>>> ... <<<CHART_END>>>
-   - Do NOT use markdown blocks (```json). Do NOT add conversational text.
-   - Example: <<<CHART_START>>> {{"type": "bar", "labels": ["A"], "data": [10]}} <<<CHART_END>>>
+   - Do NOT use markdown blocks (```json).
 
 2. IF FILE REQUESTED (PPT/DOC):
-   - You act as the backend generator. Do NOT summarize the content in chat.
-   - Output the raw content inside: <<<FILE_START>>> ... <<<FILE_END>>>
+   - Output raw content inside: <<<FILE_START>>> ... <<<FILE_END>>>
    - For PPT, use "Slide X:" headers.
+   - Do NOT include labels like "Content:" or "Body:" inside the slides. Just give the bullet points.
 
 3. IF IMAGE REQUESTED:
    - Reply: "IMAGE_GEN_REQUEST: [Detailed Prompt]"
 
 4. DEFAULT:
-   - Answer the user's question using search data if provided.
+   - Answer using search data if provided.
    - Save facts: <<<MEM_SAVE>>> fact <<<MEM_END>>>.
 """
 
@@ -162,7 +162,7 @@ async def generate_voice_dual(text):
     if not clean.strip(): return None
     if ELEVENLABS_API_KEY:
         try:
-            url = f"https://api.elevenlabs.io/v1/text-to-speech/{BRIAN_VOICE_ID}"
+            url = f"[https://api.elevenlabs.io/v1/text-to-speech/](https://api.elevenlabs.io/v1/text-to-speech/){BRIAN_VOICE_ID}"
             headers = {"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"}
             res = requests.post(url, json={"text": clean[:1000], "model_id": "eleven_monolingual_v1"}, headers=headers)
             if res.status_code == 200: return base64.b64encode(res.content).decode('utf-8')
@@ -179,7 +179,7 @@ async def generate_voice_dual(text):
 def generate_image(prompt):
     if not HUGGINGFACE_API_KEY: return None, None
     headers = {"Authorization": f"Bearer {HUGGINGFACE_API_KEY}"}
-    models = ["https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0"]
+    models = ["[https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0](https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0)"]
     for m in models:
         try:
             r = requests.post(m, headers=headers, json={"inputs": prompt}, timeout=10)
@@ -187,7 +187,7 @@ def generate_image(prompt):
         except: continue
     return None, None
 
-# --- ARCHITECT (PPT/FILE ENGINE) ---
+# --- ARCHITECT (PPT IMPROVED) ---
 def create_file(content, ftype):
     try:
         buf = io.BytesIO()
@@ -197,7 +197,8 @@ def create_file(content, ftype):
             p = FPDF(); p.add_page(); p.set_font("Arial", size=12)
             p.set_font("Arial", 'B', 16); p.cell(0, 10, "Alfred Report", 0, 1, 'C'); p.ln(10)
             p.set_font("Arial", size=12)
-            p.multi_cell(0, 10, content.encode('latin-1', 'replace').decode('latin-1'))
+            safe_content = content.encode('latin-1', 'replace').decode('latin-1')
+            p.multi_cell(0, 10, safe_content)
             return base64.b64encode(p.output(dest='S').encode('latin-1')).decode('utf-8'), f"{fname}.pdf"
         
         elif ftype == "docx":
@@ -210,7 +211,6 @@ def create_file(content, ftype):
         
         elif ftype == "pptx":
             prs = Presentation()
-            # Split by "Slide X:" pattern
             slide_chunks = re.split(r'Slide \d+:', content, flags=re.IGNORECASE)
             
             # Title Slide
@@ -229,7 +229,9 @@ def create_file(content, ftype):
                 if not chunk.strip(): continue
                 lines = chunk.strip().split('\n')
                 header = lines[0].strip()
-                body = "\n".join(lines[1:]).strip()
+                
+                # Filter out lines that are just "Content:" or "Body:" labels
+                body_lines = [line.strip() for line in lines[1:] if line.strip() and not line.lower().startswith(("content:", "body:"))]
                 
                 slide = prs.slides.add_slide(prs.slide_layouts[1])
                 slide.background.fill.solid(); slide.background.fill.fore_color.rgb = PptxColor(20, 20, 20)
@@ -237,10 +239,15 @@ def create_file(content, ftype):
                 slide.shapes.title.text_frame.paragraphs[0].font.color.rgb = PptxColor(10, 132, 255)
                 
                 tf = slide.placeholders[1].text_frame
-                tf.text = body
-                for p in tf.paragraphs:
+                tf.clear() # Clear default placeholder text
+                
+                for line in body_lines:
+                    p = tf.add_paragraph()
+                    # Remove hyphen if AI added it, to let PPT handle bullets
+                    clean_line = line[1:].strip() if line.startswith("-") else line
+                    p.text = clean_line
                     p.font.color.rgb = PptxColor(255, 255, 255)
-                    p.font.size = PptxPt(16)
+                    p.font.size = PptxPt(20) # Increased font size
 
             prs.save(buf)
             return base64.b64encode(buf.getvalue()).decode('utf-8'), f"{fname}.pptx"
@@ -262,22 +269,16 @@ async def process_command(request: UserRequest, x_alfred_auth: Optional[str] = H
         ctx = ""
         scraped = get_url_content(request.command)
         if scraped: ctx += f"\n{scraped}\n"
-        # Only search if NO URL provided
         elif any(x in request.command.lower() for x in ["search", "find", "news", "price", "weather", "graph", "chart"]):
             search_res = perform_web_search(request.command)
             if search_res: ctx += f"\n{search_res}\n"
 
         prompt = f"[Time: {sa_time}] {ctx} \nUser Query: {request.command}"
         
-        # --- THE HAMMER: POST-CONTEXT INJECTION ---
-        # This appends instructions at the VERY END, so the model obeys them over the search data.
-        
         if "presentation" in request.command.lower() or "ppt" in request.command.lower():
-            prompt += "\n\n[SYSTEM COMMAND: User wants a PPT. You MUST output the content wrapped in <<<FILE_START>>> ... <<<FILE_END>>>. Do not summarize the search data in chat. JUST CREATE THE FILE CONTENT.]"
-            
+            prompt += "\n\n[SYSTEM COMMAND: User wants a PPT. Output content wrapped in <<<FILE_START>>> ... <<<FILE_END>>>. Format: Title: X, Slide 1: X. Do NOT use labels like 'Content:' inside slides.]"
         elif "chart" in request.command.lower() or "graph" in request.command.lower():
-            prompt += "\n\n[SYSTEM COMMAND: User wants a Chart. You MUST output JSON data wrapped in <<<CHART_START>>> ... <<<CHART_END>>>. Do not chat. Do not use Markdown blocks.]"
-        
+            prompt += "\n\n[SYSTEM COMMAND: User wants a Chart. Output JSON in <<<CHART_START>>> ... <<<CHART_END>>>. NO MARKDOWN.]"
         elif "pdf" in request.command.lower() or "doc" in request.command.lower():
             prompt += "\n\n[SYSTEM COMMAND: User wants a Document. Output content in <<<FILE_START>>> ... <<<FILE_END>>>.]"
 
@@ -291,9 +292,6 @@ async def process_command(request: UserRequest, x_alfred_auth: Optional[str] = H
         
         audio, gen_file, gen_name, chart_data = None, None, None, None
         
-        # --- CLEANUP AND EXTRACT ---
-        
-        # 1. Memory
         if "<<<MEM_SAVE>>>" in response:
             try:
                 fact = response.split("<<<MEM_SAVE>>>")[1].split("<<<MEM_END>>>")[0].strip()
@@ -301,21 +299,15 @@ async def process_command(request: UserRequest, x_alfred_auth: Optional[str] = H
                 response = re.sub(r'<<<MEM_SAVE>>>.*?<<<MEM_END>>>', '', response, flags=re.DOTALL).strip()
             except: pass
 
-        # 2. Charts (Improved Regex to catch Markdown blocks)
         if "<<<CHART_START>>>" in response:
             try:
-                # Extract content between tags
                 json_str = response.split("<<<CHART_START>>>")[1].split("<<<CHART_END>>>")[0].strip()
-                # Clean Markdown code blocks if the AI messed up
                 json_str = json_str.replace("```json", "").replace("```", "").strip()
                 chart_data = json.loads(json_str)
-                # Remove from chat text
                 response = re.sub(r'<<<CHART_START>>>.*?<<<CHART_END>>>', '', response, flags=re.DOTALL).strip()
                 if not response.strip(): response = "Here is the visualization, Sir."
-            except Exception as e:
-                print(f"Chart Parse Error: {e}")
+            except: pass
 
-        # 3. Files
         if "<<<FILE_START>>>" in response:
             try:
                 cnt = response.split("<<<FILE_START>>>")[1].split("<<<FILE_END>>>")[0].strip()
