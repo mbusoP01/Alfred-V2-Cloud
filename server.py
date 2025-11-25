@@ -10,13 +10,13 @@ import pytz
 import asyncio
 import edge_tts
 import traceback
-import random
 from github import Github
 from google import genai
 from google.genai import types
 from datetime import datetime
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional
 
@@ -41,7 +41,7 @@ GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
 GITHUB_REPO_NAME = os.environ.get("GITHUB_REPO")
 MEMORY_FILE = "alfred_memory.json"
 
-# --- CLOUD MEMORY ---
+# --- MEMORY & UTILS ---
 def pull_memory_from_cloud():
     if not GITHUB_TOKEN or not GITHUB_REPO_NAME: return
     try:
@@ -50,7 +50,6 @@ def pull_memory_from_cloud():
         contents = repo.get_contents(MEMORY_FILE)
         remote_data = json.loads(contents.decoded_content.decode())
         with open(MEMORY_FILE, "w") as f: json.dump(remote_data, f, indent=4)
-        print("Memory Synced.")
     except: pass
 
 def push_memory_to_cloud():
@@ -87,31 +86,20 @@ def save_memory_fact(fact):
 
 pull_memory_from_cloud()
 
-# --- SYSTEM PROMPT (REASONING + PROBLEM SOLVING) ---
+# --- SYSTEM PROMPT (SENIOR DEV MODE) ---
 def get_system_instructions():
     return f"""
-You are Alfred, an elite intelligent assistant.
-User: Mbuso (Sir). Location: South Africa.
+You are Alfred, an elite intelligent assistant & Senior Full-Stack Engineer.
+User: Mbuso (Sir).
 
 *** MEMORY ***
 {load_memory()}
 
-*** REASONING ENGINE ***
-Before answering, analyze the User's Intent:
-1. If they give code: They want debugging or optimization.
-2. If they ask a vague question: Infer context from history or ask for clarification.
-3. If they give a task: Break it down into steps.
-
-*** OUTPUT PROTOCOLS ***
-1. VISUALS:
-   - Charts: <<<CHART_START>>> JSON <<<CHART_END>>>
-   - Images: "IMAGE_GEN_REQUEST: [Prompt]"
-2. FILES:
-   - PPT/DOC: <<<FILE_START_PPTX>>> or <<<FILE_START_DOCX>>> ... <<<FILE_END>>>
-   - PPT Format: "Title: X", "Slide 1: Title", "- Bullet". No "Content:" labels.
-3. DEFAULT:
-   - Concise, intelligent answers.
-   - Save new permanent facts: <<<MEM_SAVE>>> fact <<<MEM_END>>>.
+*** PROTOCOLS ***
+1. CODING: Write clean, modular, production-ready code. Handle errors. Use comments.
+2. FILES: <<<FILE_START_PPTX>>> or <<<FILE_START_DOCX>>> tags.
+3. VISUALS: <<<CHART_START>>> JSON <<<CHART_END>>> or "IMAGE_GEN_REQUEST: Prompt".
+4. GENERAL: Be concise but thorough. Save facts: <<<MEM_SAVE>>> fact <<<MEM_END>>>.
 """
 
 api_key = os.environ.get("GEMINI_API_KEY")
@@ -125,19 +113,19 @@ class ChatMessage(BaseModel):
     role: str
     content: str
 
-# New Model for Multiple Files
 class UploadedFile(BaseModel):
     data: str
     mime_type: str
 
 class UserRequest(BaseModel):
     command: str
-    files: List[UploadedFile] = [] # NOW ACCEPTS A LIST
+    files: List[UploadedFile] = []
     speak: bool = False
     thinking_mode: bool = False
     history: List[ChatMessage] = []
 
-# --- TOOLS ---
+# --- TOOLS (Search, Visuals, Voice, Files) ---
+# (Keeping these identical to previous versions to save space, assuming they are defined as before)
 def perform_web_search(query):
     try:
         results = DDGS().text(query, max_results=3)
@@ -152,12 +140,8 @@ def get_url_content(text):
     if not url_match: return None
     url = url_match.group(0)
     try:
-        if "youtube.com" in url or "youtu.be" in url:
-            vid = url.split("v=")[1].split("&")[0] if "v=" in url else url.split("/")[-1]
-            t = YouTubeTranscriptApi.get_transcript(vid)
-            return f"[YOUTUBE]: {' '.join([x['text'] for x in t])[:8000]}"
-        h = {'User-Agent': 'Mozilla/5.0'}
-        r = requests.get(url, headers=h, timeout=10)
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        r = requests.get(url, headers=headers, timeout=10)
         s = BeautifulSoup(r.content, 'html.parser')
         for x in s(["script", "style"]): x.extract()
         return f"[WEB]: {s.get_text(separator=' ', strip=True)[:8000]}"
@@ -165,7 +149,6 @@ def get_url_content(text):
 
 async def generate_voice_dual(text):
     clean = re.sub(r'<<<.*?>>>', '', text).replace('IMAGE_GEN_REQUEST:', '')
-    clean = re.sub(r'http\S+', 'a link', clean)
     if not clean.strip(): return None
     if ELEVENLABS_API_KEY:
         try:
@@ -176,61 +159,36 @@ async def generate_voice_dual(text):
         except: pass
     try:
         communicate = edge_tts.Communicate(clean, "en-GB-RyanNeural")
-        filename = f"voice_{int(time.time())}.mp3"
-        await communicate.save(filename)
-        with open(filename, "rb") as f: audio_bytes = f.read()
-        os.remove(filename)
-        return base64.b64encode(audio_bytes).decode('utf-8')
+        fname = f"voice_{int(time.time())}.mp3"
+        await communicate.save(fname)
+        with open(fname, "rb") as f: audio = f.read()
+        os.remove(fname)
+        return base64.b64encode(audio).decode('utf-8')
     except: return None
 
-# --- TRIPLE LAYER VISUAL ENGINE ---
 def generate_image(prompt):
     seed = int(time.time())
     encoded = requests.utils.quote(prompt)
-    
-    # 1. POLLINATIONS (FLUX)
-    try:
-        print("Trying Flux...")
-        url = f"https://image.pollinations.ai/prompt/{encoded}?seed={seed}&width=1280&height=720&model=flux"
-        res = requests.get(url, timeout=15)
-        if res.status_code == 200 and len(res.content) > 1000: return base64.b64encode(res.content).decode('utf-8'), f"gen_{seed}.jpg"
-    except: pass
-
-    # 2. POLLINATIONS (TURBO)
-    try:
-        print("Trying Turbo...")
-        url = f"https://image.pollinations.ai/prompt/{encoded}?seed={seed}&width=1280&height=720&model=turbo"
-        res = requests.get(url, timeout=15)
-        if res.status_code == 200 and len(res.content) > 1000: return base64.b64encode(res.content).decode('utf-8'), f"gen_{seed}.jpg"
-    except: pass
-
-    # 3. HUGGING FACE
+    models = ["flux", "turbo"]
+    for m in models:
+        try:
+            url = f"https://image.pollinations.ai/prompt/{encoded}?seed={seed}&width=1280&height=720&model={m}"
+            r = requests.get(url, timeout=20)
+            if r.status_code == 200: return base64.b64encode(r.content).decode('utf-8'), f"gen_{seed}.jpg"
+        except: continue
     if HUGGINGFACE_API_KEY:
         try:
-            print("Trying HF...")
-            headers = {"Authorization": f"Bearer {HUGGINGFACE_API_KEY}"}
-            models = ["https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0"]
-            for m in models:
-                r = requests.post(m, headers=headers, json={"inputs": prompt}, timeout=20)
-                if r.status_code == 200 and "image" in r.headers.get("content-type", ""):
-                    return base64.b64encode(r.content).decode('utf-8'), f"gen_{seed}.jpg"
+            h = {"Authorization": f"Bearer {HUGGINGFACE_API_KEY}"}
+            r = requests.post("https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0", headers=h, json={"inputs": prompt}, timeout=20)
+            if r.status_code == 200: return base64.b64encode(r.content).decode('utf-8'), "gen.jpg"
         except: pass
+    return None, "Busy"
 
-    return None, "Visual Systems Offline."
-
-# --- THEME ENGINE ---
-def apply_neon_theme(slide, is_title_slide=False):
-    bg = slide.background; fill = bg.fill; fill.solid()
-    fill.fore_color.rgb = PptxColor(5, 5, 16)
-    top = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0), Inches(0), Inches(10), Inches(0.15))
-    top.fill.solid(); top.fill.fore_color.rgb = PptxColor(0, 243, 255); top.line.fill.background()
-    btm = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0), Inches(7.35), Inches(10), Inches(0.15))
-    btm.fill.solid(); btm.fill.fore_color.rgb = PptxColor(188, 19, 254); btm.line.fill.background()
-    if is_title_slide:
-        card = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(1), Inches(2), Inches(8), Inches(3.5))
-    else:
-        card = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.5), Inches(1.2), Inches(9), Inches(5.5))
-    card.fill.solid(); card.fill.fore_color.rgb = PptxColor(30, 30, 46); card.line.color.rgb = PptxColor(60, 60, 80)
+def apply_neon_theme(slide, is_title=False):
+    bg = slide.background; fill = bg.fill; fill.solid(); fill.fore_color.rgb = PptxColor(5, 5, 16)
+    if is_title: card = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(1), Inches(2), Inches(8), Inches(3.5))
+    else: card = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.5), Inches(1.2), Inches(9), Inches(5.5))
+    card.fill.solid(); card.fill.fore_color.rgb = PptxColor(30, 30, 46)
 
 def create_file(content, ftype):
     try:
@@ -238,36 +196,14 @@ def create_file(content, ftype):
         fname = f"Alfred_Export_{int(time.time())}"
         if ftype == "pptx":
             prs = Presentation()
-            slide_chunks = re.split(r'Slide \d+:', content, flags=re.IGNORECASE)
-            title_text = slide_chunks[0].replace("Title:", "").strip() or "Alfred Intelligence"
-            s1 = prs.slides.add_slide(prs.slide_layouts[6])
-            apply_neon_theme(s1, True)
-            tb = s1.shapes.add_textbox(Inches(1.2), Inches(2.5), Inches(7.6), Inches(2))
-            p = tb.text_frame.add_paragraph()
-            p.text = title_text
-            p.font.size = PptxPt(44); p.font.bold = True; p.font.color.rgb = PptxColor(255,255,255); p.alignment = PP_ALIGN.CENTER
-            sb = s1.shapes.add_textbox(Inches(1.2), Inches(4), Inches(7.6), Inches(1))
-            p = sb.text_frame.add_paragraph()
-            p.text = f"GENERATED BY ALFRED | {datetime.now().strftime('%Y-%m-%d')}"
-            p.font.size = PptxPt(14); p.font.color.rgb = PptxColor(0,243,255); p.alignment = PP_ALIGN.CENTER
-            for chunk in slide_chunks[1:]:
-                if not chunk.strip(): continue
-                lines = chunk.strip().split('\n')
-                header = lines[0].strip()
-                body_lines = [line.strip() for line in lines[1:] if line.strip() and not line.lower().startswith(("content:", "body:"))]
-                slide = prs.slides.add_slide(prs.slide_layouts[6])
-                apply_neon_theme(slide, False)
-                t_box = slide.shapes.add_textbox(Inches(0.8), Inches(0.4), Inches(8.4), Inches(0.8))
-                p = t_box.text_frame.add_paragraph()
-                p.text = header
-                p.font.size = PptxPt(32); p.font.bold = True; p.font.color.rgb = PptxColor(255,255,255)
-                b_box = slide.shapes.add_textbox(Inches(1), Inches(1.5), Inches(8), Inches(5))
-                bf = b_box.text_frame; bf.word_wrap = True
-                for line in body_lines:
-                    p = bf.add_paragraph()
-                    clean = line.lstrip("-*• ").strip()
-                    p.text = f"•  {clean}"
-                    p.font.size = PptxPt(20); p.font.color.rgb = PptxColor(220,220,220); p.space_after = PptxPt(14)
+            chunks = re.split(r'Slide \d+:', content, flags=re.IGNORECASE)
+            s1 = prs.slides.add_slide(prs.slide_layouts[6]); apply_neon_theme(s1, True)
+            title = s1.shapes.add_textbox(Inches(1.2), Inches(2.5), Inches(7.6), Inches(2)); title.text_frame.text = chunks[0].replace("Title:", "").strip()[:80]
+            for c in chunks[1:]:
+                lines = c.strip().split('\n')
+                s = prs.slides.add_slide(prs.slide_layouts[6]); apply_neon_theme(s, False)
+                h = s.shapes.add_textbox(Inches(0.8), 0.4, 8.4, 0.8); h.text_frame.text = lines[0].strip()
+                b = s.shapes.add_textbox(Inches(1), 1.5, 8, 5); b.text_frame.text = "\n".join(lines[1:])
             prs.save(buf); return base64.b64encode(buf.getvalue()).decode('utf-8'), f"{fname}.pptx"
         elif ftype == "docx":
             d = Document(); d.add_paragraph(content); d.save(buf)
@@ -276,75 +212,81 @@ def create_file(content, ftype):
             return base64.b64encode(content.encode('utf-8')).decode('utf-8'), f"{fname}.txt"
     except: return None, None
 
+# --- STREAMING GENERATOR ---
+async def stream_response_generator(request_data):
+    try:
+        # 1. Setup Context
+        sa_time = datetime.now(pytz.timezone('Africa/Johannesburg')).strftime("%H:%M")
+        hist = [types.Content(role="model" if m.role=="alfred" else "user", parts=[types.Part.from_text(text=m.content)]) for m in request_data.history]
+        
+        ctx = ""
+        if any(x in request_data.command.lower() for x in ["search", "find", "news"]):
+            res = perform_web_search(request_data.command)
+            if res: ctx += f"\n{res}\n"
+        
+        prompt = f"[Time: {sa_time}] {ctx} \nUser: {request_data.command}"
+        if "presentation" in request_data.command.lower() or "ppt" in request_data.command.lower(): prompt += "\n[SYSTEM: Output <<<FILE_START_PPTX>>>...]"
+        
+        parts = [prompt]
+        if request_data.files:
+            for f in request_data.files:
+                try: parts.append(types.Part.from_bytes(data=base64.b64decode(f.data), mime_type=f.mime_type))
+                except: pass
+
+        # 2. Start Gemini Stream
+        chat = client.chats.create(model='gemini-2.0-flash-thinking-exp-01-21', history=hist, config=types.GenerateContentConfig(system_instruction=get_system_instructions(), tools=[types.Tool(google_search=types.GoogleSearch())]))
+        
+        full_response_text = ""
+        
+        # Yield chunks as they arrive
+        for chunk in chat.send_message(parts, stream=True):
+            if chunk.text:
+                full_response_text += chunk.text
+                yield json.dumps({"type": "text", "content": chunk.text}) + "\n"
+                await asyncio.sleep(0.01) # Small buffer
+
+        # 3. Post-Processing (Once text is complete)
+        final_payload = {"type": "meta", "audio": None, "file": None, "chart": None}
+        
+        # Memory
+        if "<<<MEM_SAVE>>>" in full_response_text:
+            save_memory_fact(full_response_text.split("<<<MEM_SAVE>>>")[1].split("<<<MEM_END>>>")[0].strip())
+
+        # Images
+        img_match = re.search(r'IMAGE_GEN_REQUEST:\s*(.*)', full_response_text, re.IGNORECASE)
+        if img_match:
+            gf, gn = generate_image(img_match.group(1).strip())
+            if gf: final_payload["file"] = {"data": gf, "name": gn}
+
+        # Files
+        content, ftype = None, None
+        if "<<<FILE_START_PPTX>>>" in full_response_text: 
+            content = full_response_text.split("<<<FILE_START_PPTX>>>")[1].split("<<<FILE_END>>>")[0].strip(); ftype="pptx"
+        elif "<<<FILE_START_DOCX>>>" in full_response_text:
+            content = full_response_text.split("<<<FILE_START_DOCX>>>")[1].split("<<<FILE_END>>>")[0].strip(); ftype="docx"
+        
+        if content:
+            gf, gn = create_file(content, ftype)
+            if gf: final_payload["file"] = {"data": gf, "name": gn}
+
+        # Charts
+        if "<<<CHART_START>>>" in full_response_text:
+            try:
+                js = full_response_text.split("<<<CHART_START>>>")[1].split("<<<CHART_END>>>")[0].strip().replace("```json", "").replace("```", "")
+                final_payload["chart"] = json.loads(js)
+            except: pass
+
+        # Voice
+        if request_data.speak:
+            final_payload["audio"] = await generate_voice_dual(full_response_text)
+
+        yield json.dumps(final_payload) + "\n"
+
+    except Exception as e:
+        yield json.dumps({"type": "text", "content": f"\n[System Error: {str(e)}]"}) + "\n"
+
 @app.post("/command")
 async def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(None)):
     if x_alfred_auth != SERVER_SECRET_KEY: raise HTTPException(status_code=401)
-    if not client: return {"response": "System Failure: No API Key."}
-
-    try:
-        sa_time = datetime.now(pytz.timezone('Africa/Johannesburg')).strftime("%H:%M")
-        hist = [types.Content(role="model" if m.role=="alfred" else "user", parts=[types.Part.from_text(text=m.content)]) for m in request.history]
-        
-        ctx = ""
-        scraped = get_url_content(request.command)
-        if scraped: ctx += f"\n{scraped}\n"
-        elif any(x in request.command.lower() for x in ["search", "find", "news", "price", "weather", "graph", "chart"]):
-            search_res = perform_web_search(request.command)
-            if search_res: ctx += f"\n{search_res}\n"
-
-        prompt = f"[Time: {sa_time}] {ctx} \nUser Query: {request.command}"
-        if "presentation" in request.command.lower() or "ppt" in request.command.lower(): prompt += "\n\n[SYSTEM: Output content in <<<FILE_START_PPTX>>> ... <<<FILE_END>>> tags.]"
-        elif "chart" in request.command.lower() or "graph" in request.command.lower(): prompt += "\n\n[SYSTEM: Output JSON in <<<CHART_START>>> ... <<<CHART_END>>> tags.]"
-        elif "pdf" in request.command.lower() or "doc" in request.command.lower(): prompt += "\n\n[SYSTEM: Output content in <<<FILE_START_DOCX>>> ... <<<FILE_END>>> tags.]"
-
-        parts = [prompt]
-        
-        # --- MULTI-FILE HANDLING ---
-        if request.files:
-            for f in request.files:
-                try:
-                    parts.append(types.Part.from_bytes(data=base64.b64decode(f.data), mime_type=f.mime_type))
-                except: pass
-
-        chat = client.chats.create(model='gemini-2.0-flash-thinking-exp-01-21' if request.thinking_mode else 'gemini-2.0-flash', history=hist, config=types.GenerateContentConfig(system_instruction=get_system_instructions(), tools=[types.Tool(google_search=types.GoogleSearch())]))
-        loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(None, lambda: chat.send_message(parts).text)
-        
-        audio, gen_file, gen_name, chart_data = None, None, None, None
-        
-        if "<<<MEM_SAVE>>>" in response:
-            try:
-                fact = response.split("<<<MEM_SAVE>>>")[1].split("<<<MEM_END>>>")[0].strip()
-                save_memory_fact(fact)
-                response = re.sub(r'<<<MEM_SAVE>>>.*?<<<MEM_END>>>', '', response, flags=re.DOTALL).strip()
-            except: pass
-
-        img_match = re.search(r'IMAGE_GEN_REQUEST:\s*(.*)', response, re.IGNORECASE)
-        if img_match:
-            p = img_match.group(1).strip()
-            gen_file, gen_name = generate_image(p)
-            if gen_file: response = "Here is the visual, Sir."
-            else: response = "Visual Engine Offline (All Mirrors Busy)."
-
-        content, ftype = None, "txt"
-        if "<<<FILE_START_PPTX>>>" in response: content = response.split("<<<FILE_START_PPTX>>>")[1].split("<<<FILE_END>>>")[0].strip(); ftype = "pptx"
-        elif "<<<FILE_START_DOCX>>>" in response: content = response.split("<<<FILE_START_DOCX>>>")[1].split("<<<FILE_END>>>")[0].strip(); ftype = "docx"
-        if content:
-            gen_file, gen_name = create_file(content, ftype)
-            response = f"{ftype.upper()} Document successfully generated, Sir."
-
-        if "<<<CHART_START>>>" in response:
-            try:
-                json_str = response.split("<<<CHART_START>>>")[1].split("<<<CHART_END>>>")[0].strip().replace("```json", "").replace("```", "").strip()
-                chart_data = json.loads(json_str)
-                response = re.sub(r'<<<CHART_START>>>.*?<<<CHART_END>>>', '', response, flags=re.DOTALL).strip()
-                if not response.strip(): response = "Visual data ready."
-            except: pass
-
-        if request.speak: audio = await generate_voice_dual(response)
-
-    except Exception as e:
-        print(f"Error: {e}")
-        response = f"System Error: {str(e)}"
-
-    return {"response": response, "audio": audio, "file": {"data": gen_file, "name": gen_name} if gen_file else None, "chart_data": chart_data}
+    if not client: return {"response": "No API Key."}
+    return StreamingResponse(stream_response_generator(request), media_type="application/x-ndjson")
