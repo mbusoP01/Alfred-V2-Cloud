@@ -9,10 +9,6 @@ import time
 import pytz
 import asyncio
 import edge_tts
-import numpy as np
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
 from google import genai
 from google.genai import types
 from datetime import datetime
@@ -21,23 +17,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
 
-# --- LIBRARIES ---
 from fpdf import FPDF
 from docx import Document
-from pptx import Presentation
 from bs4 import BeautifulSoup
 from youtube_transcript_api import YouTubeTranscriptApi
 from duckduckgo_search import DDGS
 
-# --- KEYS ---
 SERVER_SECRET_KEY = "Mbuso.08@"
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY")
 BRIAN_VOICE_ID = "nPczCjzI2devNBz1zQrb"
 HUGGINGFACE_API_KEY = os.environ.get("HUGGINGFACE_API_KEY")
-
 MEMORY_FILE = "alfred_memory.json"
 
-# --- MEMORY ENGINE ---
 def load_memory():
     if not os.path.exists(MEMORY_FILE): return "No prior knowledge."
     try:
@@ -56,7 +47,7 @@ def save_memory_fact(fact):
             with open(MEMORY_FILE, "w") as f: json.dump(data, f, indent=4)
     except: pass
 
-# --- SYSTEM PROMPT ---
+# --- UPDATED SYSTEM PROMPT ---
 def get_system_instructions():
     return f"""
 You are Alfred, an elite intelligent assistant.
@@ -66,31 +57,24 @@ User: Mbuso (Sir). Location: South Africa.
 {load_memory()}
 
 PROTOCOL:
-1. USE SEARCH DATA: If provided, cite it.
-2. MEMORY: If user states a new permanent fact, output: <<<MEM_SAVE>>> fact <<<MEM_END>>>.
-3. VOICE OPTIMIZED: Keep responses concise for speech synthesis unless asked for detail.
+1. SEARCH: If search data is provided, use it.
+2. MEMORY: New user facts -> <<<MEM_SAVE>>> fact <<<MEM_END>>>.
+3. CHARTS: If user asks to visualize/graph data, do NOT draw it. Output JSON:
+   <<<CHART_START>>> {{"type": "line", "title": "Bitcoin Price", "labels": ["Mon", "Tue"], "data": [50, 60]}} <<<CHART_END>>>
 
-*** FILE GENERATION ***
+*** FILES ***
 Wrap content in: <<<FILE_START>>> content <<<FILE_END>>>.
 
-*** IMAGE GENERATION ***
+*** IMAGES ***
 Reply exactly: "IMAGE_GEN_REQUEST: [Detailed Prompt]"
 """
 
 api_key = os.environ.get("GEMINI_API_KEY")
 client = None
-if api_key:
-    client = genai.Client(api_key=api_key)
+if api_key: client = genai.Client(api_key=api_key)
 
 app = FastAPI()
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"], 
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=False, allow_methods=["*"], allow_headers=["*"])
 
 class ChatMessage(BaseModel):
     role: str
@@ -104,7 +88,6 @@ class UserRequest(BaseModel):
     thinking_mode: bool = False
     history: List[ChatMessage] = []
 
-# --- 1. RESEARCHER ---
 def perform_web_search(query):
     try:
         results = DDGS().text(query, max_results=3)
@@ -114,7 +97,6 @@ def perform_web_search(query):
         return summary
     except: return None
 
-# --- 2. SCRAPER ---
 def get_url_content(text):
     url_match = re.search(r'(https?://[^\s]+)', text)
     if not url_match: return None
@@ -131,36 +113,26 @@ def get_url_content(text):
         return f"[WEB]: {s.get_text(separator=' ', strip=True)[:8000]}"
     except: return None
 
-# --- 3. VOICE ENGINE (DUAL CORE) ---
 async def generate_voice_dual(text):
     clean = re.sub(r'<<<.*?>>>', '', text).replace('IMAGE_GEN_REQUEST:', '')
-    clean = re.sub(r'http\S+', 'a link', clean) # Don't read URLs
+    clean = re.sub(r'http\S+', 'a link', clean)
     if not clean.strip(): return None
-
-    # PRIORITY 1: ELEVENLABS (High Quality)
     if ELEVENLABS_API_KEY:
         try:
             url = f"https://api.elevenlabs.io/v1/text-to-speech/{BRIAN_VOICE_ID}"
             headers = {"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"}
             res = requests.post(url, json={"text": clean[:1000], "model_id": "eleven_monolingual_v1"}, headers=headers)
-            if res.status_code == 200:
-                return base64.b64encode(res.content).decode('utf-8')
-        except: pass # Fail silently to backup
-
-    # PRIORITY 2: EDGE-TTS (Free, Unlimited, Neural)
+            if res.status_code == 200: return base64.b64encode(res.content).decode('utf-8')
+        except: pass
     try:
-        communicate = edge_tts.Communicate(clean, "en-GB-RyanNeural") # British Male
+        communicate = edge_tts.Communicate(clean, "en-GB-RyanNeural")
         filename = f"voice_{int(time.time())}.mp3"
         await communicate.save(filename)
-        with open(filename, "rb") as f:
-            audio_bytes = f.read()
-        os.remove(filename) # Cleanup
+        with open(filename, "rb") as f: audio_bytes = f.read()
+        os.remove(filename)
         return base64.b64encode(audio_bytes).decode('utf-8')
-    except Exception as e:
-        print(f"Voice Error: {e}")
-        return None
+    except: return None
 
-# --- 4. IMAGE GEN ---
 def generate_image(prompt):
     if not HUGGINGFACE_API_KEY: return None, None
     headers = {"Authorization": f"Bearer {HUGGINGFACE_API_KEY}"}
@@ -172,7 +144,6 @@ def generate_image(prompt):
         except: continue
     return None, None
 
-# --- 5. FILE FACTORY ---
 def create_file(content, ftype):
     try:
         buf = io.BytesIO()
@@ -189,7 +160,7 @@ def create_file(content, ftype):
     except: return None, None
 
 @app.get("/")
-def home(): return {"status": "Alfred Online (Phase 3: Voice Stability)"}
+def home(): return {"status": "Alfred Online (Phase 4: Analyst)"}
 
 @app.post("/command")
 async def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(None)):
@@ -198,46 +169,39 @@ async def process_command(request: UserRequest, x_alfred_auth: Optional[str] = H
 
     try:
         sa_time = datetime.now(pytz.timezone('Africa/Johannesburg')).strftime("%H:%M")
-        
-        # Prepare Context
         hist = [types.Content(role="model" if m.role=="alfred" else "user", parts=[types.Part.from_text(text=m.content)]) for m in request.history]
         
-        # Search/Scrape Logic
         ctx = ""
         scraped = get_url_content(request.command)
         if scraped: ctx += f"\n{scraped}\n"
-        elif any(x in request.command.lower() for x in ["search", "find", "news", "price", "weather"]):
+        elif any(x in request.command.lower() for x in ["search", "find", "news", "price", "weather", "graph", "chart"]):
             search_res = perform_web_search(request.command)
             if search_res: ctx += f"\n{search_res}\n"
 
-        # Prompt
         prompt = f"[Time: {sa_time}] {ctx} \nUser: {request.command}"
         parts = [prompt]
-        if request.file_data:
-            parts.append(types.Part.from_bytes(data=base64.b64decode(request.file_data), mime_type=request.mime_type))
+        if request.file_data: parts.append(types.Part.from_bytes(data=base64.b64decode(request.file_data), mime_type=request.mime_type))
 
-        # Generate (Blocking Call wrapped)
-        chat = client.chats.create(
-            model='gemini-2.0-flash-thinking-exp-01-21' if request.thinking_mode else 'gemini-2.0-flash',
-            history=hist,
-            config=types.GenerateContentConfig(
-                system_instruction=get_system_instructions(),
-                tools=[types.Tool(google_search=types.GoogleSearch())]
-            )
-        )
+        chat = client.chats.create(model='gemini-2.0-flash-thinking-exp-01-21' if request.thinking_mode else 'gemini-2.0-flash', history=hist, config=types.GenerateContentConfig(system_instruction=get_system_instructions(), tools=[types.Tool(google_search=types.GoogleSearch())]))
         
-        # Run Gemini Sync code in thread to not block Async Voice
         loop = asyncio.get_event_loop()
         response = await loop.run_in_executor(None, lambda: chat.send_message(parts).text)
         
-        # Post-Process
-        audio, gen_file, gen_name = None, None, None
+        audio, gen_file, gen_name, chart_data = None, None, None, None
         
         if "<<<MEM_SAVE>>>" in response:
             try:
                 fact = response.split("<<<MEM_SAVE>>>")[1].split("<<<MEM_END>>>")[0].strip()
                 save_memory_fact(fact)
                 response = re.sub(r'<<<MEM_SAVE>>>.*?<<<MEM_END>>>', '', response, flags=re.DOTALL).strip()
+            except: pass
+
+        if "<<<CHART_START>>>" in response:
+            try:
+                json_str = response.split("<<<CHART_START>>>")[1].split("<<<CHART_END>>>")[0].strip()
+                chart_data = json.loads(json_str)
+                response = re.sub(r'<<<CHART_START>>>.*?<<<CHART_END>>>', '', response, flags=re.DOTALL).strip()
+                if not response: response = "Here is the visual data, Sir."
             except: pass
 
         if "<<<FILE_START>>>" in response:
@@ -253,13 +217,10 @@ async def process_command(request: UserRequest, x_alfred_auth: Optional[str] = H
             response = "Rendering image..."
             gen_file, gen_name = generate_image(p)
 
-        # Async Voice Generation
-        if request.speak:
-            audio = await generate_voice_dual(response)
+        if request.speak: audio = await generate_voice_dual(response)
 
     except Exception as e:
         print(f"Error: {e}")
         response = f"System Error: {str(e)}"
-        audio, gen_file, gen_name = None, None, None
 
-    return {"response": response, "audio": audio, "file": {"data": gen_file, "name": gen_name} if gen_file else None}
+    return {"response": response, "audio": audio, "file": {"data": gen_file, "name": gen_name} if gen_file else None, "chart_data": chart_data}
