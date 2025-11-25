@@ -9,6 +9,7 @@ import time
 import pytz
 import asyncio
 import edge_tts
+import traceback
 from github import Github
 from google import genai
 from google.genai import types
@@ -85,7 +86,7 @@ def save_memory_fact(fact):
 
 pull_memory_from_cloud()
 
-# --- SYSTEM PROMPT ---
+# --- SYSTEM PROMPT (EXPLICIT TAGS) ---
 def get_system_instructions():
     return f"""
 You are Alfred, an elite intelligent assistant.
@@ -97,18 +98,21 @@ User: Mbuso (Sir). Location: South Africa.
 *** STRICT PROTOCOL ***
 
 1. IF CHART REQUESTED:
-   - Output ONLY JSON data inside tags: <<<CHART_START>>> ... <<<CHART_END>>>.
+   - Output JSON in tags: <<<CHART_START>>> ... <<<CHART_END>>>
+   - NO Markdown.
 
-2. IF FILE REQUESTED (PPT/DOC):
-   - Output raw content inside: <<<FILE_START>>> ... <<<FILE_END>>>
-   - For PPT, use "Slide X:" headers.
-   - Do NOT include labels like "Content:" or "Body:" inside the slides. Just give the bullet points.
+2. IF POWERPOINT REQUESTED:
+   - Output content in tags: <<<FILE_START_PPTX>>> ... <<<FILE_END>>>
+   - Format: "Title: X", then "Slide 1: Title", etc. Do NOT use "Content:" labels.
 
-3. IF IMAGE REQUESTED:
+3. IF DOCUMENT REQUESTED (Word/PDF):
+   - Output content in tags: <<<FILE_START_DOCX>>> ... <<<FILE_END>>>
+
+4. IF IMAGE REQUESTED:
    - Reply: "IMAGE_GEN_REQUEST: [Detailed Prompt]"
 
-4. DEFAULT:
-   - Answer using search data if provided.
+5. DEFAULT:
+   - Answer normally using search data.
    - Save facts: <<<MEM_SAVE>>> fact <<<MEM_END>>>.
 """
 
@@ -188,108 +192,91 @@ def generate_image(prompt):
         except: continue
     return None, None
 
-# --- THE "IRON MAN" HUD THEME ---
-def apply_tech_theme(slide, is_title_slide=False):
-    # 1. Dark Background
-    bg = slide.background
-    fill = bg.fill
-    fill.solid()
-    fill.fore_color.rgb = PptxColor(5, 5, 16) 
+# --- THEME ENGINE ---
+def apply_neon_theme(slide, is_title_slide=False):
+    # 1. BG
+    bg = slide.background; fill = bg.fill; fill.solid()
+    fill.fore_color.rgb = PptxColor(5, 5, 16)
     
-    # 2. Top & Bottom Bars
-    top = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0), Inches(0), Inches(10), Inches(0.1))
+    # 2. Bars
+    top = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0), Inches(0), Inches(10), Inches(0.15))
     top.fill.solid(); top.fill.fore_color.rgb = PptxColor(0, 243, 255); top.line.fill.background()
-    btm = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0), Inches(7.4), Inches(10), Inches(0.1))
+    btm = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0), Inches(7.35), Inches(10), Inches(0.15))
     btm.fill.solid(); btm.fill.fore_color.rgb = PptxColor(188, 19, 254); btm.line.fill.background()
 
-    # 3. Tech Corner Brackets (The HUD Look)
-    # Top Left
-    bracket = slide.shapes.add_shape(MSO_SHAPE.L_SHAPE, Inches(0.2), Inches(0.2), Inches(0.5), Inches(0.5))
-    bracket.fill.solid(); bracket.fill.fore_color.rgb = PptxColor(100, 100, 100); bracket.rotation = 0
-    # Top Right
-    bracket = slide.shapes.add_shape(MSO_SHAPE.L_SHAPE, Inches(9.3), Inches(0.2), Inches(0.5), Inches(0.5))
-    bracket.fill.solid(); bracket.fill.fore_color.rgb = PptxColor(100, 100, 100); bracket.rotation = 90
-    
-    # 4. Glowing Status Dot (Top Right)
-    dot = slide.shapes.add_shape(MSO_SHAPE.OVAL, Inches(9.5), Inches(0.3), Inches(0.15), Inches(0.15))
-    dot.fill.solid(); dot.fill.fore_color.rgb = PptxColor(0, 255, 0) # Green Status
-    dot.line.color.rgb = PptxColor(0, 200, 0)
-
-    # 5. Content Card
+    # 3. Card
     if is_title_slide:
         card = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(1), Inches(2), Inches(8), Inches(3.5))
     else:
         card = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.5), Inches(1.2), Inches(9), Inches(5.5))
-    
-    card.fill.solid()
-    card.fill.fore_color.rgb = PptxColor(30, 30, 46)
-    card.line.color.rgb = PptxColor(60, 60, 80)
+    card.fill.solid(); card.fill.fore_color.rgb = PptxColor(30, 30, 46); card.line.color.rgb = PptxColor(60, 60, 80)
 
 def create_file(content, ftype):
     try:
         buf = io.BytesIO()
         fname = f"Alfred_Export_{int(time.time())}"
         
-        if ftype == "pdf":
-            p = FPDF(); p.add_page(); p.set_font("Arial", size=12)
-            p.multi_cell(0, 10, content.encode('latin-1', 'replace').decode('latin-1'))
-            return base64.b64encode(p.output(dest='S').encode('latin-1')).decode('utf-8'), f"{fname}.pdf"
-        
+        if ftype == "pptx":
+            try:
+                prs = Presentation()
+                slide_chunks = re.split(r'Slide \d+:', content, flags=re.IGNORECASE)
+                
+                # Title Slide
+                title_text = slide_chunks[0].replace("Title:", "").strip() or "Alfred Intelligence"
+                s1 = prs.slides.add_slide(prs.slide_layouts[6])
+                apply_neon_theme(s1, True)
+                
+                tb = s1.shapes.add_textbox(Inches(1.2), Inches(2.5), Inches(7.6), Inches(2))
+                p = tb.text_frame.add_paragraph()
+                p.text = title_text
+                p.font.size = PptxPt(44); p.font.bold = True; p.font.color.rgb = PptxColor(255,255,255); p.alignment = PP_ALIGN.CENTER
+                
+                sb = s1.shapes.add_textbox(Inches(1.2), Inches(4), Inches(7.6), Inches(1))
+                p = sb.text_frame.add_paragraph()
+                p.text = f"GENERATED BY ALFRED | {datetime.now().strftime('%Y-%m-%d')}"
+                p.font.size = PptxPt(14); p.font.color.rgb = PptxColor(0,243,255); p.alignment = PP_ALIGN.CENTER
+
+                # Body Slides
+                for chunk in slide_chunks[1:]:
+                    if not chunk.strip(): continue
+                    lines = chunk.strip().split('\n')
+                    header = lines[0].strip()
+                    body_lines = [line.strip() for line in lines[1:] if line.strip() and not line.lower().startswith(("content:", "body:"))]
+                    
+                    slide = prs.slides.add_slide(prs.slide_layouts[6])
+                    apply_neon_theme(slide, False)
+                    
+                    t_box = slide.shapes.add_textbox(Inches(0.8), Inches(0.4), Inches(8.4), Inches(0.8))
+                    p = t_box.text_frame.add_paragraph()
+                    p.text = header
+                    p.font.size = PptxPt(32); p.font.bold = True; p.font.color.rgb = PptxColor(255,255,255)
+                    
+                    b_box = slide.shapes.add_textbox(Inches(1), Inches(1.5), Inches(8), Inches(5))
+                    bf = b_box.text_frame; bf.word_wrap = True
+                    
+                    for line in body_lines:
+                        p = bf.add_paragraph()
+                        clean = line.lstrip("-*• ").strip()
+                        p.text = f"•  {clean}"
+                        p.font.size = PptxPt(20); p.font.color.rgb = PptxColor(220,220,220); p.space_after = PptxPt(14)
+
+                prs.save(buf)
+                return base64.b64encode(buf.getvalue()).decode('utf-8'), f"{fname}.pptx"
+            except Exception as e:
+                # FALLBACK TO TEXT IF PPTX FAILS
+                print(f"PPTX Gen Failed: {e}")
+                traceback.print_exc()
+                return create_file(f"PPTX Generation Failed. Here is the raw content:\n\n{content}", "txt")
+
         elif ftype == "docx":
             d = Document(); d.add_paragraph(content); d.save(buf)
             return base64.b64encode(buf.getvalue()).decode('utf-8'), f"{fname}.docx"
-        
-        elif ftype == "pptx":
-            prs = Presentation()
-            slide_chunks = re.split(r'Slide \d+:', content, flags=re.IGNORECASE)
-            
-            # TITLE SLIDE
-            title_text = slide_chunks[0].replace("Title:", "").strip() or "Alfred Intelligence"
-            s1 = prs.slides.add_slide(prs.slide_layouts[6])
-            apply_tech_theme(s1, is_title_slide=True)
-            
-            tb = s1.shapes.add_textbox(Inches(1.2), Inches(2.5), Inches(7.6), Inches(2))
-            p = tb.text_frame.add_paragraph()
-            p.text = title_text
-            p.font.size = PptxPt(44); p.font.bold = True; p.font.color.rgb = PptxColor(255,255,255); p.alignment = PP_ALIGN.CENTER
-            
-            sb = s1.shapes.add_textbox(Inches(1.2), Inches(4), Inches(7.6), Inches(1))
-            p = sb.text_frame.add_paragraph()
-            p.text = f"GENERATED BY ALFRED | {datetime.now().strftime('%Y-%m-%d')}"
-            p.font.size = PptxPt(14); p.font.color.rgb = PptxColor(0,243,255); p.alignment = PP_ALIGN.CENTER
-
-            # CONTENT SLIDES
-            for chunk in slide_chunks[1:]:
-                if not chunk.strip(): continue
-                lines = chunk.strip().split('\n')
-                header = lines[0].strip()
-                body_lines = [line.strip() for line in lines[1:] if line.strip() and not line.lower().startswith(("content:", "body:"))]
-                
-                slide = prs.slides.add_slide(prs.slide_layouts[6])
-                apply_tech_theme(slide, is_title_slide=False)
-                
-                t_box = slide.shapes.add_textbox(Inches(0.8), Inches(0.4), Inches(8.4), Inches(0.8))
-                p = t_box.text_frame.add_paragraph()
-                p.text = header
-                p.font.size = PptxPt(32); p.font.bold = True; p.font.color.rgb = PptxColor(255,255,255)
-                
-                b_box = slide.shapes.add_textbox(Inches(1), Inches(1.5), Inches(8), Inches(5))
-                bf = b_box.text_frame; bf.word_wrap = True
-                
-                for line in body_lines:
-                    p = bf.add_paragraph()
-                    clean = line.lstrip("-*• ").strip()
-                    p.text = f"•  {clean}"
-                    p.font.size = PptxPt(20); p.font.color.rgb = PptxColor(220,220,220); p.space_after = PptxPt(14)
-
-            prs.save(buf)
-            return base64.b64encode(buf.getvalue()).decode('utf-8'), f"{fname}.pptx"
             
         elif ftype == "txt":
             return base64.b64encode(content.encode('utf-8')).decode('utf-8'), f"{fname}.txt"
             
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"File Gen Error: {e}")
         return None, None
 
 @app.post("/command")
@@ -310,12 +297,13 @@ async def process_command(request: UserRequest, x_alfred_auth: Optional[str] = H
 
         prompt = f"[Time: {sa_time}] {ctx} \nUser Query: {request.command}"
         
+        # HAMMER INJECTION (POST-CONTEXT)
         if "presentation" in request.command.lower() or "ppt" in request.command.lower():
-            prompt += "\n\n[SYSTEM COMMAND: User wants a PPT. Output content wrapped in <<<FILE_START>>> ... <<<FILE_END>>>. Format: Title: X, Slide 1: X. Do NOT use labels like 'Content:' inside slides.]"
+            prompt += "\n\n[SYSTEM: You MUST output content in <<<FILE_START_PPTX>>> ... <<<FILE_END>>> tags.]"
         elif "chart" in request.command.lower() or "graph" in request.command.lower():
-            prompt += "\n\n[SYSTEM COMMAND: User wants a Chart. Output JSON in <<<CHART_START>>> ... <<<CHART_END>>>. NO MARKDOWN.]"
+            prompt += "\n\n[SYSTEM: You MUST output JSON in <<<CHART_START>>> ... <<<CHART_END>>> tags.]"
         elif "pdf" in request.command.lower() or "doc" in request.command.lower():
-            prompt += "\n\n[SYSTEM COMMAND: User wants a Document. Output content in <<<FILE_START>>> ... <<<FILE_END>>>.]"
+            prompt += "\n\n[SYSTEM: You MUST output content in <<<FILE_START_DOCX>>> ... <<<FILE_END>>> tags.]"
 
         parts = [prompt]
         if request.file_data: parts.append(types.Part.from_bytes(data=base64.b64decode(request.file_data), mime_type=request.mime_type))
@@ -327,6 +315,7 @@ async def process_command(request: UserRequest, x_alfred_auth: Optional[str] = H
         
         audio, gen_file, gen_name, chart_data = None, None, None, None
         
+        # 1. Memory
         if "<<<MEM_SAVE>>>" in response:
             try:
                 fact = response.split("<<<MEM_SAVE>>>")[1].split("<<<MEM_END>>>")[0].strip()
@@ -334,27 +323,36 @@ async def process_command(request: UserRequest, x_alfred_auth: Optional[str] = H
                 response = re.sub(r'<<<MEM_SAVE>>>.*?<<<MEM_END>>>', '', response, flags=re.DOTALL).strip()
             except: pass
 
+        # 2. Charts
         if "<<<CHART_START>>>" in response:
             try:
                 json_str = response.split("<<<CHART_START>>>")[1].split("<<<CHART_END>>>")[0].strip()
                 json_str = json_str.replace("```json", "").replace("```", "").strip()
                 chart_data = json.loads(json_str)
                 response = re.sub(r'<<<CHART_START>>>.*?<<<CHART_END>>>', '', response, flags=re.DOTALL).strip()
-                if not response.strip(): response = "Here is the visualization, Sir."
+                if not response.strip(): response = "Visual data ready."
             except: pass
 
-        if "<<<FILE_START>>>" in response:
-            try:
-                cnt = response.split("<<<FILE_START>>>")[1].split("<<<FILE_END>>>")[0].strip()
-                ftype = "docx" if "word" in request.command.lower() else "txt"
-                if "presentation" in request.command.lower() or "ppt" in request.command.lower(): ftype = "pptx"
-                elif "pdf" in request.command.lower(): ftype = "pdf"
-                
-                gen_file, gen_name = create_file(cnt, ftype)
-                response = "File successfully generated, Sir."
-            except: pass
+        # 3. Files (EXPLICIT TYPE DETECTION)
+        content = None
+        ftype = "txt"
+        
+        if "<<<FILE_START_PPTX>>>" in response:
+            content = response.split("<<<FILE_START_PPTX>>>")[1].split("<<<FILE_END>>>")[0].strip()
+            ftype = "pptx"
+        elif "<<<FILE_START_DOCX>>>" in response:
+            content = response.split("<<<FILE_START_DOCX>>>")[1].split("<<<FILE_END>>>")[0].strip()
+            ftype = "docx"
+        # Legacy fallback
+        elif "<<<FILE_START>>>" in response:
+            content = response.split("<<<FILE_START>>>")[1].split("<<<FILE_END>>>")[0].strip()
+            if "presentation" in request.command.lower(): ftype = "pptx"
             
-        elif "IMAGE_GEN_REQUEST:" in response:
+        if content:
+            gen_file, gen_name = create_file(content, ftype)
+            response = f"{ftype.upper()} Document successfully generated, Sir."
+
+        if "IMAGE_GEN_REQUEST:" in response:
             p = response.split("IMAGE_GEN_REQUEST:")[1].strip()
             response = "Rendering image..."
             gen_file, gen_name = generate_image(p)
