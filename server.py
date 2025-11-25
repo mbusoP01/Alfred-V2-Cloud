@@ -9,6 +9,7 @@ import time
 import pytz
 import asyncio
 import edge_tts
+from github import Github # The Cloud Connector
 from google import genai
 from google.genai import types
 from datetime import datetime
@@ -27,8 +28,53 @@ SERVER_SECRET_KEY = "Mbuso.08@"
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY")
 BRIAN_VOICE_ID = "nPczCjzI2devNBz1zQrb"
 HUGGINGFACE_API_KEY = os.environ.get("HUGGINGFACE_API_KEY")
+
+# --- CLOUD MEMORY CONFIG ---
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
+GITHUB_REPO_NAME = os.environ.get("GITHUB_REPO") # Format: "username/repo-name"
 MEMORY_FILE = "alfred_memory.json"
 
+# --- CLOUD SYNAPSE FUNCTIONS ---
+def pull_memory_from_cloud():
+    """Downloads memory from GitHub on startup."""
+    if not GITHUB_TOKEN or not GITHUB_REPO_NAME:
+        print("GitHub Not Configured. Using local memory only.")
+        return
+
+    print("Attempting to sync memory from Cloud...")
+    try:
+        g = Github(GITHUB_TOKEN)
+        repo = g.get_repo(GITHUB_REPO_NAME)
+        contents = repo.get_contents(MEMORY_FILE)
+        remote_data = json.loads(contents.decoded_content.decode())
+        
+        # Save to local server
+        with open(MEMORY_FILE, "w") as f:
+            json.dump(remote_data, f, indent=4)
+        print("Memory Synced Successfully.")
+    except Exception as e:
+        print(f"Cloud Sync Failed (Using Local): {e}")
+
+def push_memory_to_cloud():
+    """Backs up memory to GitHub (Runs in background)."""
+    if not GITHUB_TOKEN or not GITHUB_REPO_NAME: return
+
+    try:
+        g = Github(GITHUB_TOKEN)
+        repo = g.get_repo(GITHUB_REPO_NAME)
+        contents = repo.get_contents(MEMORY_FILE)
+        
+        # Read local
+        with open(MEMORY_FILE, "r") as f:
+            local_data = json.load(f)
+        
+        # Update Cloud
+        repo.update_file(contents.path, "Alfred Memory Update", json.dumps(local_data, indent=4), contents.sha)
+        print("Memory Backed up to Cloud.")
+    except Exception as e:
+        print(f"Cloud Backup Failed: {e}")
+
+# --- MEMORY LOGIC ---
 def load_memory():
     if not os.path.exists(MEMORY_FILE): return "No prior knowledge."
     try:
@@ -42,25 +88,34 @@ def save_memory_fact(fact):
         data = {"facts": []}
         if os.path.exists(MEMORY_FILE):
             with open(MEMORY_FILE, "r") as f: data = json.load(f)
+        
         if fact not in data["facts"]:
             data["facts"].append(fact)
+            # 1. Save Local
             with open(MEMORY_FILE, "w") as f: json.dump(data, f, indent=4)
+            # 2. Save Cloud (Async Wrapper)
+            try:
+                loop = asyncio.get_event_loop()
+                loop.run_in_executor(None, push_memory_to_cloud)
+            except: pass # Don't block if loop fails
     except: pass
 
-# --- UPDATED SYSTEM PROMPT ---
+# --- INITIALIZE MEMORY ON STARTUP ---
+pull_memory_from_cloud()
+
+# --- SYSTEM PROMPT ---
 def get_system_instructions():
     return f"""
 You are Alfred, an elite intelligent assistant.
 User: Mbuso (Sir). Location: South Africa.
 
-*** LONG-TERM MEMORY ***
+*** LONG-TERM MEMORY (Synced from Cloud) ***
 {load_memory()}
 
 PROTOCOL:
 1. SEARCH: If search data is provided, use it.
 2. MEMORY: New user facts -> <<<MEM_SAVE>>> fact <<<MEM_END>>>.
-3. CHARTS: If user asks to visualize/graph data, do NOT draw it. Output JSON:
-   <<<CHART_START>>> {{"type": "line", "title": "Bitcoin Price", "labels": ["Mon", "Tue"], "data": [50, 60]}} <<<CHART_END>>>
+3. CHARTS: Output JSON: <<<CHART_START>>> {{"type": "line", "labels": [], "data": []}} <<<CHART_END>>>
 
 *** FILES ***
 Wrap content in: <<<FILE_START>>> content <<<FILE_END>>>.
@@ -160,7 +215,7 @@ def create_file(content, ftype):
     except: return None, None
 
 @app.get("/")
-def home(): return {"status": "Alfred Online (Phase 4: Analyst)"}
+def home(): return {"status": "Alfred Online (Phase 5: Total Recall)"}
 
 @app.post("/command")
 async def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(None)):
