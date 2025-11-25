@@ -179,24 +179,31 @@ async def process_command(request: UserRequest, x_alfred_auth: Optional[str] = H
             try: parts.append(types.Part.from_bytes(data=base64.b64decode(f.data), mime_type=f.mime_type))
             except: pass
 
-    # --- IPHONE MODE (NO STREAMING) ---
+    # --- IPHONE MODE (NO STREAMING + RETRY LOGIC) ---
     if x_client_device == "ios":
         try:
-            chat = client.chats.create(model='gemini-2.0-flash', history=[types.Content(role="model" if m.role=="alfred" else "user", parts=[types.Part.from_text(text=m.content)]) for m in request.history], config=types.GenerateContentConfig(system_instruction=get_system_instructions(), tools=[types.Tool(google_search=types.GoogleSearch())]))
+            # Attempt 1: Thinking Model
+            chat = client.chats.create(model='gemini-2.0-flash-thinking-exp-01-21', history=[types.Content(role="model" if m.role=="alfred" else "user", parts=[types.Part.from_text(text=m.content)]) for m in request.history], config=types.GenerateContentConfig(system_instruction=get_system_instructions(), tools=[types.Tool(google_search=types.GoogleSearch())]))
             response = chat.send_message(parts)
             text_reply = response.text
-            
-            # Handle Memory Save in background
-            if "<<<MEM_SAVE>>>" in text_reply:
-                save_memory_fact(text_reply.split("<<<MEM_SAVE>>>")[1].split("<<<MEM_END>>>")[0].strip())
-            
-            # Return RAW TEXT for Shortcuts to read easily
-            return Response(content=text_reply, media_type="text/plain")
         except Exception as e:
-            return Response(content=f"System Error: {str(e)}", media_type="text/plain")
+            # Attempt 2: Fallback to Flash 2.0
+            try:
+                print(f"iOS Primary Failed: {e}. Switching to Flash.")
+                chat = client.chats.create(model='gemini-2.0-flash', history=[types.Content(role="model" if m.role=="alfred" else "user", parts=[types.Part.from_text(text=m.content)]) for m in request.history], config=types.GenerateContentConfig(system_instruction=get_system_instructions(), tools=[types.Tool(google_search=types.GoogleSearch())]))
+                response = chat.send_message(parts)
+                text_reply = response.text
+            except Exception as e2:
+                return Response(content=f"Alfred Offline. Error: {str(e2)}", media_type="text/plain")
+
+        # Process Memory
+        if "<<<MEM_SAVE>>>" in text_reply:
+            try: save_memory_fact(text_reply.split("<<<MEM_SAVE>>>")[1].split("<<<MEM_END>>>")[0].strip())
+            except: pass
+        
+        return Response(content=text_reply, media_type="text/plain")
 
     # --- WEB MODE (STREAMING) ---
-    # (This remains the same generator logic for the browser)
     async def stream_gen():
         try:
             chat = client.chats.create(model='gemini-2.0-flash-thinking-exp-01-21', history=[types.Content(role="model" if m.role=="alfred" else "user", parts=[types.Part.from_text(text=m.content)]) for m in request.history], config=types.GenerateContentConfig(system_instruction=get_system_instructions(), tools=[types.Tool(google_search=types.GoogleSearch())]))
@@ -206,13 +213,24 @@ async def process_command(request: UserRequest, x_alfred_auth: Optional[str] = H
                     full_text += chunk.text
                     yield json.dumps({"type": "text", "content": chunk.text}) + "\n"
                     await asyncio.sleep(0.01)
-            
-            if "<<<MEM_SAVE>>>" in full_text:
-                try: save_memory_fact(full_text.split("<<<MEM_SAVE>>>")[1].split("<<<MEM_END>>>")[0].strip())
-                except: pass
-            
-            yield json.dumps({"type": "meta", "file": None}) + "\n"
         except Exception as e:
-            yield json.dumps({"type": "text", "content": str(e)}) + "\n"
+            # Fallback for Web
+            if "429" in str(e) or "404" in str(e):
+                yield json.dumps({"type": "text", "content": "\n[Switching to Backup Circuit...]\n"}) + "\n"
+                chat = client.chats.create(model='gemini-2.0-flash', history=[types.Content(role="model" if m.role=="alfred" else "user", parts=[types.Part.from_text(text=m.content)]) for m in request.history], config=types.GenerateContentConfig(system_instruction=get_system_instructions(), tools=[types.Tool(google_search=types.GoogleSearch())]))
+                for chunk in chat.send_message_stream(parts):
+                    if chunk.text:
+                        full_text += chunk.text
+                        yield json.dumps({"type": "text", "content": chunk.text}) + "\n"
+                        await asyncio.sleep(0.01)
+            else:
+                yield json.dumps({"type": "text", "content": str(e)}) + "\n"
+        
+        # Post-process memory saving for web
+        if "<<<MEM_SAVE>>>" in full_text:
+            try: save_memory_fact(full_text.split("<<<MEM_SAVE>>>")[1].split("<<<MEM_END>>>")[0].strip())
+            except: pass
+            
+        yield json.dumps({"type": "meta", "file": None}) + "\n"
 
     return StreamingResponse(stream_gen(), media_type="application/x-ndjson")
