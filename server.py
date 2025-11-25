@@ -10,6 +10,7 @@ import pytz
 import asyncio
 import edge_tts
 import traceback
+import random
 from github import Github
 from google import genai
 from google.genai import types
@@ -41,7 +42,7 @@ GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
 GITHUB_REPO_NAME = os.environ.get("GITHUB_REPO")
 MEMORY_FILE = "alfred_memory.json"
 
-# --- MEMORY & UTILS ---
+# --- CLOUD MEMORY ---
 def pull_memory_from_cloud():
     if not GITHUB_TOKEN or not GITHUB_REPO_NAME: return
     try:
@@ -86,7 +87,7 @@ def save_memory_fact(fact):
 
 pull_memory_from_cloud()
 
-# --- SYSTEM PROMPT (SENIOR DEV MODE) ---
+# --- SYSTEM PROMPT ---
 def get_system_instructions():
     return f"""
 You are Alfred, an elite intelligent assistant & Senior Full-Stack Engineer.
@@ -124,8 +125,7 @@ class UserRequest(BaseModel):
     thinking_mode: bool = False
     history: List[ChatMessage] = []
 
-# --- TOOLS (Search, Visuals, Voice, Files) ---
-# (Keeping these identical to previous versions to save space, assuming they are defined as before)
+# --- TOOLS ---
 def perform_web_search(query):
     try:
         results = DDGS().text(query, max_results=3)
@@ -186,9 +186,13 @@ def generate_image(prompt):
 
 def apply_neon_theme(slide, is_title=False):
     bg = slide.background; fill = bg.fill; fill.solid(); fill.fore_color.rgb = PptxColor(5, 5, 16)
+    top = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0), Inches(0), Inches(10), Inches(0.15))
+    top.fill.solid(); top.fill.fore_color.rgb = PptxColor(0, 243, 255); top.line.fill.background()
+    btm = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0), Inches(7.35), Inches(10), Inches(0.15))
+    btm.fill.solid(); btm.fill.fore_color.rgb = PptxColor(188, 19, 254); btm.line.fill.background()
     if is_title: card = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(1), Inches(2), Inches(8), Inches(3.5))
     else: card = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.5), Inches(1.2), Inches(9), Inches(5.5))
-    card.fill.solid(); card.fill.fore_color.rgb = PptxColor(30, 30, 46)
+    card.fill.solid(); card.fill.fore_color.rgb = PptxColor(30, 30, 46); card.line.color.rgb = PptxColor(60, 60, 80)
 
 def create_file(content, ftype):
     try:
@@ -199,11 +203,30 @@ def create_file(content, ftype):
             chunks = re.split(r'Slide \d+:', content, flags=re.IGNORECASE)
             s1 = prs.slides.add_slide(prs.slide_layouts[6]); apply_neon_theme(s1, True)
             title = s1.shapes.add_textbox(Inches(1.2), Inches(2.5), Inches(7.6), Inches(2)); title.text_frame.text = chunks[0].replace("Title:", "").strip()[:80]
+            # Styling title
+            title.text_frame.paragraphs[0].font.size = PptxPt(44)
+            title.text_frame.paragraphs[0].font.bold = True
+            title.text_frame.paragraphs[0].font.color.rgb = PptxColor(255, 255, 255)
+            title.text_frame.paragraphs[0].alignment = PP_ALIGN.CENTER
+            
             for c in chunks[1:]:
+                if not c.strip(): continue
                 lines = c.strip().split('\n')
                 s = prs.slides.add_slide(prs.slide_layouts[6]); apply_neon_theme(s, False)
-                h = s.shapes.add_textbox(Inches(0.8), 0.4, 8.4, 0.8); h.text_frame.text = lines[0].strip()
-                b = s.shapes.add_textbox(Inches(1), 1.5, 8, 5); b.text_frame.text = "\n".join(lines[1:])
+                h = s.shapes.add_textbox(Inches(0.8), Inches(0.4), Inches(8.4), Inches(0.8)); h.text_frame.text = lines[0].strip()
+                h.text_frame.paragraphs[0].font.size = PptxPt(32)
+                h.text_frame.paragraphs[0].font.bold = True
+                h.text_frame.paragraphs[0].font.color.rgb = PptxColor(255, 255, 255)
+                
+                b = s.shapes.add_textbox(Inches(1), Inches(1.5), Inches(8), Inches(5)); 
+                b.text_frame.word_wrap = True
+                for line in lines[1:]:
+                    if not line.strip(): continue
+                    p = b.text_frame.add_paragraph()
+                    p.text = "• " + line.lstrip("-*• ").strip()
+                    p.font.size = PptxPt(20)
+                    p.font.color.rgb = PptxColor(220, 220, 220)
+                    p.space_after = PptxPt(14)
             prs.save(buf); return base64.b64encode(buf.getvalue()).decode('utf-8'), f"{fname}.pptx"
         elif ftype == "docx":
             d = Document(); d.add_paragraph(content); d.save(buf)
@@ -238,27 +261,25 @@ async def stream_response_generator(request_data):
         
         full_response_text = ""
         
-        # Yield chunks as they arrive
-        for chunk in chat.send_message(parts, stream=True):
+        # FIX: USE send_message_stream INSTEAD OF stream=True
+        for chunk in chat.send_message_stream(parts):
             if chunk.text:
                 full_response_text += chunk.text
                 yield json.dumps({"type": "text", "content": chunk.text}) + "\n"
-                await asyncio.sleep(0.01) # Small buffer
+                await asyncio.sleep(0.01) # Buffer
 
-        # 3. Post-Processing (Once text is complete)
+        # 3. Post-Processing
         final_payload = {"type": "meta", "audio": None, "file": None, "chart": None}
         
-        # Memory
         if "<<<MEM_SAVE>>>" in full_response_text:
-            save_memory_fact(full_response_text.split("<<<MEM_SAVE>>>")[1].split("<<<MEM_END>>>")[0].strip())
+            try: save_memory_fact(full_response_text.split("<<<MEM_SAVE>>>")[1].split("<<<MEM_END>>>")[0].strip())
+            except: pass
 
-        # Images
         img_match = re.search(r'IMAGE_GEN_REQUEST:\s*(.*)', full_response_text, re.IGNORECASE)
         if img_match:
             gf, gn = generate_image(img_match.group(1).strip())
             if gf: final_payload["file"] = {"data": gf, "name": gn}
 
-        # Files
         content, ftype = None, None
         if "<<<FILE_START_PPTX>>>" in full_response_text: 
             content = full_response_text.split("<<<FILE_START_PPTX>>>")[1].split("<<<FILE_END>>>")[0].strip(); ftype="pptx"
@@ -269,20 +290,20 @@ async def stream_response_generator(request_data):
             gf, gn = create_file(content, ftype)
             if gf: final_payload["file"] = {"data": gf, "name": gn}
 
-        # Charts
         if "<<<CHART_START>>>" in full_response_text:
             try:
                 js = full_response_text.split("<<<CHART_START>>>")[1].split("<<<CHART_END>>>")[0].strip().replace("```json", "").replace("```", "")
                 final_payload["chart"] = json.loads(js)
             except: pass
 
-        # Voice
         if request_data.speak:
             final_payload["audio"] = await generate_voice_dual(full_response_text)
 
         yield json.dumps(final_payload) + "\n"
 
     except Exception as e:
+        # Print trace for debugging on render logs
+        traceback.print_exc()
         yield json.dumps({"type": "text", "content": f"\n[System Error: {str(e)}]"}) + "\n"
 
 @app.post("/command")
