@@ -21,9 +21,8 @@ from typing import List, Optional
 # --- LIBRARIES ---
 from fpdf import FPDF
 from docx import Document
-from docx.shared import Pt, RGBColor as DocxColor
 from pptx import Presentation
-from pptx.util import Inches, Pt as PptxPt
+from pptx.util import Pt as PptxPt
 from pptx.dml.color import RGBColor as PptxColor
 from bs4 import BeautifulSoup
 from youtube_transcript_api import YouTubeTranscriptApi
@@ -34,13 +33,11 @@ SERVER_SECRET_KEY = "Mbuso.08@"
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY")
 BRIAN_VOICE_ID = "nPczCjzI2devNBz1zQrb"
 HUGGINGFACE_API_KEY = os.environ.get("HUGGINGFACE_API_KEY")
-
-# --- CLOUD MEMORY CONFIG ---
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
 GITHUB_REPO_NAME = os.environ.get("GITHUB_REPO")
 MEMORY_FILE = "alfred_memory.json"
 
-# --- CLOUD SYNAPSE FUNCTIONS ---
+# --- CLOUD MEMORY ---
 def pull_memory_from_cloud():
     if not GITHUB_TOKEN or not GITHUB_REPO_NAME: return
     try:
@@ -49,7 +46,7 @@ def pull_memory_from_cloud():
         contents = repo.get_contents(MEMORY_FILE)
         remote_data = json.loads(contents.decoded_content.decode())
         with open(MEMORY_FILE, "w") as f: json.dump(remote_data, f, indent=4)
-        print("Memory Synced from Cloud.")
+        print("Memory Synced.")
     except: pass
 
 def push_memory_to_cloud():
@@ -62,7 +59,6 @@ def push_memory_to_cloud():
         repo.update_file(contents.path, "Alfred Memory Update", json.dumps(local_data, indent=4), contents.sha)
     except: pass
 
-# --- MEMORY LOGIC ---
 def load_memory():
     if not os.path.exists(MEMORY_FILE): return "No prior knowledge."
     try:
@@ -85,10 +81,9 @@ def save_memory_fact(fact):
             except: pass
     except: pass
 
-# --- INITIALIZE ---
 pull_memory_from_cloud()
 
-# --- SYSTEM PROMPT ---
+# --- SYSTEM PROMPT (STRENGTHENED) ---
 def get_system_instructions():
     return f"""
 You are Alfred, an elite intelligent assistant.
@@ -97,16 +92,24 @@ User: Mbuso (Sir). Location: South Africa.
 *** MEMORY ***
 {load_memory()}
 
-PROTOCOL:
-1. SEARCH: Use real-time data if provided.
-2. MEMORY: Save new facts: <<<MEM_SAVE>>> fact <<<MEM_END>>>.
-3. VISUALS:
-   - Charts: <<<CHART_START>>> JSON <<<CHART_END>>>
-   - Files: <<<FILE_START>>> Content <<<FILE_END>>>
-   - Images: "IMAGE_GEN_REQUEST: Prompt"
+*** STRICT PROTOCOL (FOLLOW ORDER) ***
 
-*** PRESENTATION STYLE ***
-When creating files, structure your content clearly with "Title: X" and bullet points so I can format them beautifully.
+1. IF USER ASKS FOR A CHART/GRAPH:
+   - You MUST output JSON data. Do NOT just summarize the text.
+   - Format: <<<CHART_START>>> {{"type": "line", "title": "Chart Title", "labels": ["A", "B"], "data": [10, 20]}} <<<CHART_END>>>
+   - Use the search results to populate the numbers, but output the CHART tag.
+
+2. IF USER ASKS FOR A FILE (PPT, WORD, PDF):
+   - Do NOT say "I cannot create files." You CAN. The system will handle the creation.
+   - You just need to provide the TEXT CONTENT inside tags.
+   - Format: <<<FILE_START>>> Title: The Future of AI\n\nSlide 1: Intro... <<<FILE_END>>>
+
+3. IF USER ASKS FOR IMAGE:
+   - Reply: "IMAGE_GEN_REQUEST: [Detailed Prompt]"
+
+4. GENERAL QUERIES:
+   - Use search data if provided.
+   - Save permanent facts: <<<MEM_SAVE>>> fact <<<MEM_END>>>.
 """
 
 api_key = os.environ.get("GEMINI_API_KEY")
@@ -128,17 +131,16 @@ class UserRequest(BaseModel):
     thinking_mode: bool = False
     history: List[ChatMessage] = []
 
-# --- 1. SEARCH ---
+# --- TOOLS ---
 def perform_web_search(query):
     try:
         results = DDGS().text(query, max_results=3)
         if not results: return None
-        summary = "REAL-TIME SEARCH DATA:\n"
+        summary = "REAL-TIME SEARCH DATA (Use this to build the Chart or Answer):\n"
         for r in results: summary += f"- {r['title']}: {r['body']}\n"
         return summary
     except: return None
 
-# --- 2. SCRAPE ---
 def get_url_content(text):
     url_match = re.search(r'(https?://[^\s]+)', text)
     if not url_match: return None
@@ -155,7 +157,6 @@ def get_url_content(text):
         return f"[WEB]: {s.get_text(separator=' ', strip=True)[:8000]}"
     except: return None
 
-# --- 3. VOICE ---
 async def generate_voice_dual(text):
     clean = re.sub(r'<<<.*?>>>', '', text).replace('IMAGE_GEN_REQUEST:', '')
     clean = re.sub(r'http\S+', 'a link', clean)
@@ -176,7 +177,6 @@ async def generate_voice_dual(text):
         return base64.b64encode(audio_bytes).decode('utf-8')
     except: return None
 
-# --- 4. IMAGE ---
 def generate_image(prompt):
     if not HUGGINGFACE_API_KEY: return None, None
     headers = {"Authorization": f"Bearer {HUGGINGFACE_API_KEY}"}
@@ -188,7 +188,7 @@ def generate_image(prompt):
         except: continue
     return None, None
 
-# --- 5. THE ARCHITECT (FILE GEN) ---
+# --- ARCHITECT (FILE GEN) ---
 def create_file(content, ftype):
     try:
         buf = io.BytesIO()
@@ -196,59 +196,40 @@ def create_file(content, ftype):
         
         if ftype == "pdf":
             p = FPDF(); p.add_page(); p.set_font("Arial", size=12)
-            # Add Header
-            p.set_font("Arial", 'B', 16); p.cell(0, 10, "Alfred Intelligence Report", 0, 1, 'C'); p.ln(10)
+            p.set_font("Arial", 'B', 16); p.cell(0, 10, "Alfred Report", 0, 1, 'C'); p.ln(10)
             p.set_font("Arial", size=12)
             p.multi_cell(0, 10, content.encode('latin-1', 'replace').decode('latin-1'))
             return base64.b64encode(p.output(dest='S').encode('latin-1')).decode('utf-8'), f"{fname}.pdf"
         
         elif ftype == "docx":
             d = Document()
-            # Title
-            title = d.add_heading('Alfred Intelligence Report', 0)
-            title.alignment = 1 # Center
-            d.add_paragraph(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-            d.add_paragraph("-" * 50)
+            d.add_heading('Alfred Report', 0).alignment = 1
+            d.add_paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d')}")
             d.add_paragraph(content)
             d.save(buf)
             return base64.b64encode(buf.getvalue()).decode('utf-8'), f"{fname}.docx"
         
         elif ftype == "pptx":
             prs = Presentation()
-            # Slide 1: Title
-            slide1 = prs.slides.add_slide(prs.slide_layouts[0]) # Title Slide
-            title = slide1.shapes.title
-            subtitle = slide1.placeholders[1]
-            title.text = "Alfred Intelligence Briefing"
-            subtitle.text = f"Prepared for Mbuso (Sir)\n{datetime.now().strftime('%Y-%m-%d')}"
+            # Slide 1
+            s1 = prs.slides.add_slide(prs.slide_layouts[0])
+            s1.background.fill.solid(); s1.background.fill.fore_color.rgb = PptxColor(20, 20, 20)
+            s1.shapes.title.text = "Alfred Intelligence"
+            s1.shapes.title.text_frame.paragraphs[0].font.color.rgb = PptxColor(10, 132, 255)
+            s1.placeholders[1].text = f"User Request\n{datetime.now().strftime('%Y-%m-%d')}"
+            s1.placeholders[1].text_frame.paragraphs[0].font.color.rgb = PptxColor(200, 200, 200)
             
-            # Dark Mode Styling (Manual)
-            background = slide1.background
-            fill = background.fill
-            fill.solid()
-            fill.fore_color.rgb = PptxColor(20, 20, 20) # Dark BG
-            title.text_frame.paragraphs[0].font.color.rgb = PptxColor(10, 132, 255) # Blue Accent
-            subtitle.text_frame.paragraphs[0].font.color.rgb = PptxColor(200, 200, 200) # Grey Text
-
-            # Slide 2: Content
-            slide2 = prs.slides.add_slide(prs.slide_layouts[1]) # Title + Content
-            # Dark Mode Slide 2
-            background = slide2.background; fill = background.fill; fill.solid(); fill.fore_color.rgb = PptxColor(20, 20, 20)
+            # Slide 2
+            s2 = prs.slides.add_slide(prs.slide_layouts[1])
+            s2.background.fill.solid(); s2.background.fill.fore_color.rgb = PptxColor(20, 20, 20)
+            s2.shapes.title.text = "Content Detail"
+            s2.shapes.title.text_frame.paragraphs[0].font.color.rgb = PptxColor(10, 132, 255)
             
-            # Content Parsing (Simple Split)
-            lines = content.split('\n')
-            header_text = lines[0] if lines else "Details"
-            body_text = "\n".join(lines[1:]) if len(lines) > 1 else content
-
-            title_shape = slide2.shapes.title
-            title_shape.text = header_text[:50] # Limit title length
-            title_shape.text_frame.paragraphs[0].font.color.rgb = PptxColor(10, 132, 255)
-            
-            body_shape = slide2.placeholders[1]
-            body_shape.text = body_text
-            for paragraph in body_shape.text_frame.paragraphs:
-                paragraph.font.color.rgb = PptxColor(255, 255, 255) # White body text
-                paragraph.font.size = PptxPt(18)
+            body = s2.placeholders[1]
+            body.text = content[:1000] # Safe limit
+            for p in body.text_frame.paragraphs:
+                p.font.color.rgb = PptxColor(255, 255, 255)
+                p.font.size = PptxPt(16)
 
             prs.save(buf)
             return base64.b64encode(buf.getvalue()).decode('utf-8'), f"{fname}.pptx"
@@ -256,20 +237,6 @@ def create_file(content, ftype):
         elif ftype == "txt":
             return base64.b64encode(content.encode('utf-8')).decode('utf-8'), f"{fname}.txt"
             
-    except Exception as e:
-        print(f"File Gen Error: {e}")
-        return None, None
-
-# --- CHART ---
-def execute_chart_code(code):
-    try:
-        local_env = {"plt": plt, "np": np}
-        exec(code, {}, local_env)
-        buf = io.BytesIO()
-        plt.savefig(buf, format='png', bbox_inches='tight')
-        plt.close()
-        buf.seek(0)
-        return base64.b64encode(buf.getvalue()).decode('utf-8'), "alfred_chart.png"
     except: return None, None
 
 @app.post("/command")
@@ -289,6 +256,13 @@ async def process_command(request: UserRequest, x_alfred_auth: Optional[str] = H
             if search_res: ctx += f"\n{search_res}\n"
 
         prompt = f"[Time: {sa_time}] {ctx} \nUser: {request.command}"
+        
+        # --- PROMPT INJECTION TO FORCE COMPLIANCE ---
+        if "presentation" in request.command.lower() or "ppt" in request.command.lower():
+            prompt += "\n[SYSTEM: Create the content and wrap it in <<<FILE_START>>>...<<<FILE_END>>>. Do not refuse.]"
+        if "chart" in request.command.lower() or "graph" in request.command.lower():
+            prompt += "\n[SYSTEM: Output the JSON data in <<<CHART_START>>>...<<<CHART_END>>> tags. Do not summarize.]"
+
         parts = [prompt]
         if request.file_data: parts.append(types.Part.from_bytes(data=base64.b64decode(request.file_data), mime_type=request.mime_type))
 
