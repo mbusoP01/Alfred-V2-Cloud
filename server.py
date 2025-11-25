@@ -9,7 +9,7 @@ import time
 import pytz
 import asyncio
 import edge_tts
-from github import Github # The Cloud Connector
+from github import Github
 from google import genai
 from google.genai import types
 from datetime import datetime
@@ -18,12 +18,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
 
+# --- LIBRARIES ---
 from fpdf import FPDF
 from docx import Document
+from docx.shared import Pt, RGBColor as DocxColor
+from pptx import Presentation
+from pptx.util import Inches, Pt as PptxPt
+from pptx.dml.color import RGBColor as PptxColor
 from bs4 import BeautifulSoup
 from youtube_transcript_api import YouTubeTranscriptApi
 from duckduckgo_search import DDGS
 
+# --- KEYS ---
 SERVER_SECRET_KEY = "Mbuso.08@"
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY")
 BRIAN_VOICE_ID = "nPczCjzI2devNBz1zQrb"
@@ -31,48 +37,30 @@ HUGGINGFACE_API_KEY = os.environ.get("HUGGINGFACE_API_KEY")
 
 # --- CLOUD MEMORY CONFIG ---
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
-GITHUB_REPO_NAME = os.environ.get("GITHUB_REPO") # Format: "username/repo-name"
+GITHUB_REPO_NAME = os.environ.get("GITHUB_REPO")
 MEMORY_FILE = "alfred_memory.json"
 
 # --- CLOUD SYNAPSE FUNCTIONS ---
 def pull_memory_from_cloud():
-    """Downloads memory from GitHub on startup."""
-    if not GITHUB_TOKEN or not GITHUB_REPO_NAME:
-        print("GitHub Not Configured. Using local memory only.")
-        return
-
-    print("Attempting to sync memory from Cloud...")
+    if not GITHUB_TOKEN or not GITHUB_REPO_NAME: return
     try:
         g = Github(GITHUB_TOKEN)
         repo = g.get_repo(GITHUB_REPO_NAME)
         contents = repo.get_contents(MEMORY_FILE)
         remote_data = json.loads(contents.decoded_content.decode())
-        
-        # Save to local server
-        with open(MEMORY_FILE, "w") as f:
-            json.dump(remote_data, f, indent=4)
-        print("Memory Synced Successfully.")
-    except Exception as e:
-        print(f"Cloud Sync Failed (Using Local): {e}")
+        with open(MEMORY_FILE, "w") as f: json.dump(remote_data, f, indent=4)
+        print("Memory Synced from Cloud.")
+    except: pass
 
 def push_memory_to_cloud():
-    """Backs up memory to GitHub (Runs in background)."""
     if not GITHUB_TOKEN or not GITHUB_REPO_NAME: return
-
     try:
         g = Github(GITHUB_TOKEN)
         repo = g.get_repo(GITHUB_REPO_NAME)
         contents = repo.get_contents(MEMORY_FILE)
-        
-        # Read local
-        with open(MEMORY_FILE, "r") as f:
-            local_data = json.load(f)
-        
-        # Update Cloud
+        with open(MEMORY_FILE, "r") as f: local_data = json.load(f)
         repo.update_file(contents.path, "Alfred Memory Update", json.dumps(local_data, indent=4), contents.sha)
-        print("Memory Backed up to Cloud.")
-    except Exception as e:
-        print(f"Cloud Backup Failed: {e}")
+    except: pass
 
 # --- MEMORY LOGIC ---
 def load_memory():
@@ -88,19 +76,16 @@ def save_memory_fact(fact):
         data = {"facts": []}
         if os.path.exists(MEMORY_FILE):
             with open(MEMORY_FILE, "r") as f: data = json.load(f)
-        
         if fact not in data["facts"]:
             data["facts"].append(fact)
-            # 1. Save Local
             with open(MEMORY_FILE, "w") as f: json.dump(data, f, indent=4)
-            # 2. Save Cloud (Async Wrapper)
             try:
                 loop = asyncio.get_event_loop()
                 loop.run_in_executor(None, push_memory_to_cloud)
-            except: pass # Don't block if loop fails
+            except: pass
     except: pass
 
-# --- INITIALIZE MEMORY ON STARTUP ---
+# --- INITIALIZE ---
 pull_memory_from_cloud()
 
 # --- SYSTEM PROMPT ---
@@ -109,19 +94,19 @@ def get_system_instructions():
 You are Alfred, an elite intelligent assistant.
 User: Mbuso (Sir). Location: South Africa.
 
-*** LONG-TERM MEMORY (Synced from Cloud) ***
+*** MEMORY ***
 {load_memory()}
 
 PROTOCOL:
-1. SEARCH: If search data is provided, use it.
-2. MEMORY: New user facts -> <<<MEM_SAVE>>> fact <<<MEM_END>>>.
-3. CHARTS: Output JSON: <<<CHART_START>>> {{"type": "line", "labels": [], "data": []}} <<<CHART_END>>>
+1. SEARCH: Use real-time data if provided.
+2. MEMORY: Save new facts: <<<MEM_SAVE>>> fact <<<MEM_END>>>.
+3. VISUALS:
+   - Charts: <<<CHART_START>>> JSON <<<CHART_END>>>
+   - Files: <<<FILE_START>>> Content <<<FILE_END>>>
+   - Images: "IMAGE_GEN_REQUEST: Prompt"
 
-*** FILES ***
-Wrap content in: <<<FILE_START>>> content <<<FILE_END>>>.
-
-*** IMAGES ***
-Reply exactly: "IMAGE_GEN_REQUEST: [Detailed Prompt]"
+*** PRESENTATION STYLE ***
+When creating files, structure your content clearly with "Title: X" and bullet points so I can format them beautifully.
 """
 
 api_key = os.environ.get("GEMINI_API_KEY")
@@ -143,6 +128,7 @@ class UserRequest(BaseModel):
     thinking_mode: bool = False
     history: List[ChatMessage] = []
 
+# --- 1. SEARCH ---
 def perform_web_search(query):
     try:
         results = DDGS().text(query, max_results=3)
@@ -152,6 +138,7 @@ def perform_web_search(query):
         return summary
     except: return None
 
+# --- 2. SCRAPE ---
 def get_url_content(text):
     url_match = re.search(r'(https?://[^\s]+)', text)
     if not url_match: return None
@@ -168,6 +155,7 @@ def get_url_content(text):
         return f"[WEB]: {s.get_text(separator=' ', strip=True)[:8000]}"
     except: return None
 
+# --- 3. VOICE ---
 async def generate_voice_dual(text):
     clean = re.sub(r'<<<.*?>>>', '', text).replace('IMAGE_GEN_REQUEST:', '')
     clean = re.sub(r'http\S+', 'a link', clean)
@@ -188,6 +176,7 @@ async def generate_voice_dual(text):
         return base64.b64encode(audio_bytes).decode('utf-8')
     except: return None
 
+# --- 4. IMAGE ---
 def generate_image(prompt):
     if not HUGGINGFACE_API_KEY: return None, None
     headers = {"Authorization": f"Bearer {HUGGINGFACE_API_KEY}"}
@@ -199,23 +188,89 @@ def generate_image(prompt):
         except: continue
     return None, None
 
+# --- 5. THE ARCHITECT (FILE GEN) ---
 def create_file(content, ftype):
     try:
         buf = io.BytesIO()
-        fname = f"alfred_doc_{int(time.time())}"
+        fname = f"Alfred_Export_{int(time.time())}"
+        
         if ftype == "pdf":
             p = FPDF(); p.add_page(); p.set_font("Arial", size=12)
+            # Add Header
+            p.set_font("Arial", 'B', 16); p.cell(0, 10, "Alfred Intelligence Report", 0, 1, 'C'); p.ln(10)
+            p.set_font("Arial", size=12)
             p.multi_cell(0, 10, content.encode('latin-1', 'replace').decode('latin-1'))
             return base64.b64encode(p.output(dest='S').encode('latin-1')).decode('utf-8'), f"{fname}.pdf"
+        
         elif ftype == "docx":
-            d = Document(); d.add_heading('Alfred Gen', 0); d.add_paragraph(content); d.save(buf)
+            d = Document()
+            # Title
+            title = d.add_heading('Alfred Intelligence Report', 0)
+            title.alignment = 1 # Center
+            d.add_paragraph(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+            d.add_paragraph("-" * 50)
+            d.add_paragraph(content)
+            d.save(buf)
             return base64.b64encode(buf.getvalue()).decode('utf-8'), f"{fname}.docx"
+        
+        elif ftype == "pptx":
+            prs = Presentation()
+            # Slide 1: Title
+            slide1 = prs.slides.add_slide(prs.slide_layouts[0]) # Title Slide
+            title = slide1.shapes.title
+            subtitle = slide1.placeholders[1]
+            title.text = "Alfred Intelligence Briefing"
+            subtitle.text = f"Prepared for Mbuso (Sir)\n{datetime.now().strftime('%Y-%m-%d')}"
+            
+            # Dark Mode Styling (Manual)
+            background = slide1.background
+            fill = background.fill
+            fill.solid()
+            fill.fore_color.rgb = PptxColor(20, 20, 20) # Dark BG
+            title.text_frame.paragraphs[0].font.color.rgb = PptxColor(10, 132, 255) # Blue Accent
+            subtitle.text_frame.paragraphs[0].font.color.rgb = PptxColor(200, 200, 200) # Grey Text
+
+            # Slide 2: Content
+            slide2 = prs.slides.add_slide(prs.slide_layouts[1]) # Title + Content
+            # Dark Mode Slide 2
+            background = slide2.background; fill = background.fill; fill.solid(); fill.fore_color.rgb = PptxColor(20, 20, 20)
+            
+            # Content Parsing (Simple Split)
+            lines = content.split('\n')
+            header_text = lines[0] if lines else "Details"
+            body_text = "\n".join(lines[1:]) if len(lines) > 1 else content
+
+            title_shape = slide2.shapes.title
+            title_shape.text = header_text[:50] # Limit title length
+            title_shape.text_frame.paragraphs[0].font.color.rgb = PptxColor(10, 132, 255)
+            
+            body_shape = slide2.placeholders[1]
+            body_shape.text = body_text
+            for paragraph in body_shape.text_frame.paragraphs:
+                paragraph.font.color.rgb = PptxColor(255, 255, 255) # White body text
+                paragraph.font.size = PptxPt(18)
+
+            prs.save(buf)
+            return base64.b64encode(buf.getvalue()).decode('utf-8'), f"{fname}.pptx"
+            
         elif ftype == "txt":
             return base64.b64encode(content.encode('utf-8')).decode('utf-8'), f"{fname}.txt"
-    except: return None, None
+            
+    except Exception as e:
+        print(f"File Gen Error: {e}")
+        return None, None
 
-@app.get("/")
-def home(): return {"status": "Alfred Online (Phase 5: Total Recall)"}
+# --- CHART ---
+def execute_chart_code(code):
+    try:
+        local_env = {"plt": plt, "np": np}
+        exec(code, {}, local_env)
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', bbox_inches='tight')
+        plt.close()
+        buf.seek(0)
+        return base64.b64encode(buf.getvalue()).decode('utf-8'), "alfred_chart.png"
+    except: return None, None
 
 @app.post("/command")
 async def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(None)):
@@ -263,6 +318,9 @@ async def process_command(request: UserRequest, x_alfred_auth: Optional[str] = H
             try:
                 cnt = response.split("<<<FILE_START>>>")[1].split("<<<FILE_END>>>")[0].strip()
                 ftype = "docx" if "word" in request.command.lower() else "txt"
+                if "presentation" in request.command.lower() or "ppt" in request.command.lower(): ftype = "pptx"
+                elif "pdf" in request.command.lower(): ftype = "pdf"
+                
                 gen_file, gen_name = create_file(cnt, ftype)
                 response = "Document ready, Sir."
             except: pass
