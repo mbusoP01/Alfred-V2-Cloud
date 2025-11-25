@@ -9,16 +9,13 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22 fill=%22white%22>⚚</text></svg>">
 
     <style>
-        /* --- 10 UNIQUE THEMES --- */
-        :root { 
-            --bg: #000000; --sidebar: #111111; --header: rgba(20,20,20,0.95); 
-            --user-msg: #0A84FF; --alfred-msg: #262629; --text: #FFFFFF; 
-            --accent: #0A84FF; --border: #333; --grad: none; 
-        }
+        /* --- THEMES --- */
+        :root { --bg: #000000; --sidebar: #111111; --header: rgba(20,20,20,0.95); --user-msg: #0A84FF; --alfred-msg: #262629; --text: #FFFFFF; --accent: #0A84FF; --border: #333; }
         
         [data-theme="midnight"] { --bg:#000000; --sidebar:#0a0a0a; --header:rgba(10,10,10,0.95); --user-msg:#0A84FF; --alfred-msg:#1c1c1e; --text:#fff; --accent:#0A84FF; --border:#333; }
         [data-theme="matrix"] { --bg:#000500; --sidebar:#001a00; --header:rgba(0,10,0,0.95); --user-msg:#003300; --alfred-msg:#001a00; --text:#00ff00; --accent:#00ff00; --border:#004400; }
@@ -34,8 +31,7 @@
         * { box-sizing: border-box; }
         body { 
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
-            background: var(--bg); 
-            background-attachment: fixed;
+            background: var(--bg); background-attachment: fixed;
             color: var(--text); margin: 0; height: 100dvh; 
             overflow: hidden; display: flex; flex-direction: column; 
             transition: background 0.5s ease, color 0.3s ease; 
@@ -67,7 +63,6 @@
         .user { align-self: flex-end; background-color: var(--user-msg); color: #fff; border-bottom-right-radius: 4px; }
         .alfred { align-self: flex-start; background-color: var(--alfred-msg); color: var(--text); border-bottom-left-radius: 4px; border: 1px solid rgba(255,255,255,0.05); }
         
-        /* THINKING DOTS */
         .typing-dots { display: inline-flex; gap: 4px; padding: 0 5px; }
         .typing-dots span {
             width: 6px; height: 6px; background: var(--accent); border-radius: 50%;
@@ -83,6 +78,12 @@
         .copy-btn { position: absolute; top: 5px; right: 5px; background: rgba(255,255,255,0.1); border: 1px solid var(--border); color: var(--text); padding: 4px 8px; border-radius: 4px; font-size: 12px; cursor: pointer; transition: 0.2s; }
         .copy-btn:hover { background: var(--accent); color: white; }
 
+        /* CHART CONTAINER */
+        .chart-container { 
+            position: relative; height: 300px; width: 100%; margin: 15px 0; 
+            background: rgba(255,255,255,0.02); border-radius: 15px; padding: 10px; border: 1px solid var(--border);
+        }
+
         .input-area { position: fixed; bottom: 0; left: 0; right: 0; padding: 10px 15px; padding-bottom: max(10px, env(safe-area-inset-bottom)); background: var(--header); backdrop-filter: blur(20px); display: flex; align-items: center; gap: 10px; border-top: 1px solid var(--border); z-index: 200; transition: opacity 0.3s; }
         .input-area.disabled { opacity: 0.5; pointer-events: none; filter: grayscale(1); }
 
@@ -91,8 +92,6 @@
         
         .action-main-btn { background: var(--accent); border: none; border-radius: 50%; width: 40px; height: 40px; color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; transition: 0.2s; box-shadow: 0 4px 10px rgba(0,0,0,0.2); }
         .action-main-btn:hover { transform: scale(1.05); }
-        
-        /* STOP BUTTON STYLE */
         .action-main-btn.stop-mode { background: #ff3b30; animation: none; }
         
         .mic-active { background-color: #ff3b30; animation: pulse 1.5s infinite; }
@@ -139,7 +138,6 @@
         .toggle-btn.on { opacity: 1; text-shadow: 0 0 10px var(--accent); transform: scale(1.1); }
         .file-card { display: flex; align-items: center; gap: 10px; background: rgba(255,255,255,0.1); padding: 10px; border-radius: 10px; margin-top: 10px; border: 1px solid var(--border); text-decoration: none; color: var(--text); }
         
-        /* MSG ACTIONS: COPY & EDIT */
         .msg-actions { position: absolute; bottom: -20px; right: 0; display: flex; gap: 8px; opacity: 0; transition: 0.2s; }
         .message:hover .msg-actions { opacity: 1; }
         .action-mini-btn { background: var(--header); border: 1px solid var(--border); color: var(--text); border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; font-size: 10px; cursor: pointer; }
@@ -218,26 +216,18 @@
         let chats = JSON.parse(localStorage.getItem('alfred_chats') || "[]");
         let currentChatId = null, currentFileData = null, currentMimeType = null;
         let isVoiceOn = false, isThinkingOn = false;
-        
-        // --- NEW: Abort Controller for Stop Button ---
-        let abortController = null;
-        let isProcessing = false;
+        let abortController = null, isProcessing = false;
 
         function updateOnlineStatus() {
             const banner = document.getElementById('offline-banner');
             const inputArea = document.getElementById('inputArea');
             if (navigator.onLine) {
-                banner.classList.remove('active');
-                inputArea.classList.remove('disabled');
-                document.body.classList.remove('offline-mode');
+                banner.classList.remove('active'); inputArea.classList.remove('disabled'); document.body.classList.remove('offline-mode');
             } else {
-                banner.classList.add('active');
-                inputArea.classList.add('disabled');
-                document.body.classList.add('offline-mode');
+                banner.classList.add('active'); inputArea.classList.add('disabled'); document.body.classList.add('offline-mode');
             }
         }
-        window.addEventListener('online', updateOnlineStatus);
-        window.addEventListener('offline', updateOnlineStatus);
+        window.addEventListener('online', updateOnlineStatus); window.addEventListener('offline', updateOnlineStatus);
         updateOnlineStatus();
 
         function playClick() { const s = document.getElementById('sfx-click'); if(s) { s.currentTime=0; s.play().catch(e=>{}); }}
@@ -254,12 +244,7 @@
         checkAuth(); 
 
         function loadTheme() { const t = localStorage.getItem('alfred_theme') || 'midnight'; document.body.setAttribute('data-theme', t); }
-        function setTheme(t) { 
-            playClick();
-            document.body.setAttribute('data-theme', t);
-            localStorage.setItem('alfred_theme', t); 
-            toggleThemes(); 
-        }
+        function setTheme(t) { playClick(); document.body.setAttribute('data-theme', t); localStorage.setItem('alfred_theme', t); toggleThemes(); }
         loadTheme();
 
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -276,69 +261,30 @@
         function toggleThemes() { document.getElementById('themeModal').classList.toggle('open'); if(document.getElementById('sidebar').classList.contains('open')) toggleSidebar(); }
         function closeAllMenus() { playClick(); document.getElementById('sidebar').classList.remove('open'); document.getElementById('themeModal').classList.remove('open'); document.getElementById('overlay').classList.remove('show'); }
 
-        // --- UPDATED BUTTON STATE LOGIC ---
         function updateButtonState() {
             const text = document.getElementById('userInput').value.trim();
             const btn = document.getElementById('actionBtn');
-            
-            // 1. If Processing -> STOP Button
-            if (isProcessing) {
-                btn.innerHTML = '<i class="fa-solid fa-square"></i>';
-                btn.classList.add('stop-mode');
-                return;
-            } 
-            
-            // Reset styles
+            if (isProcessing) { btn.innerHTML = '<i class="fa-solid fa-square"></i>'; btn.classList.add('stop-mode'); return; } 
             btn.classList.remove('stop-mode');
-            
-            // 2. If Text/File -> SEND Button
-            if (text.length > 0 || currentFileData) {
-                btn.innerHTML = '<i class="fa-solid fa-paper-plane"></i>';
-            } 
-            // 3. If Empty -> MIC Button
-            else {
-                btn.innerHTML = '<i class="fa-solid fa-microphone"></i>';
-            }
+            if (text.length > 0 || currentFileData) btn.innerHTML = '<i class="fa-solid fa-paper-plane"></i>';
+            else btn.innerHTML = '<i class="fa-solid fa-microphone"></i>';
         }
 
         function handleAction() {
             if(!navigator.onLine) return;
-
-            // STATE 1: Cancel Request
-            if (isProcessing) {
-                stopGeneration();
-                return;
-            }
-
-            // STATE 2: Send Message
+            if (isProcessing) { stopGeneration(); return; }
             const text = document.getElementById('userInput').value.trim();
-            if (text.length > 0 || currentFileData) {
-                sendMessage();
-            } 
-            // STATE 3: Start Mic
-            else {
-                startDictation();
-            }
+            if (text.length > 0 || currentFileData) sendMessage(); else startDictation();
         }
 
         function stopGeneration() {
-            if (abortController) {
-                abortController.abort();
-                abortController = null;
-            }
-            isProcessing = false;
-            const loading = document.getElementById('loading');
-            if (loading) loading.remove();
-            updateButtonState();
+            if (abortController) { abortController.abort(); abortController = null; }
+            isProcessing = false; const loading = document.getElementById('loading'); if (loading) loading.remove(); updateButtonState();
         }
 
         function startDictation() {
             playClick();
-            if (recognition) { 
-                document.getElementById('actionBtn').classList.add('mic-active'); 
-                document.getElementById('actionBtn').innerHTML = '<i class="fa-solid fa-microphone-lines"></i>'; 
-                recognition.start(); 
-            } else { alert("Mic not supported."); }
+            if (recognition) { document.getElementById('actionBtn').classList.add('mic-active'); document.getElementById('actionBtn').innerHTML = '<i class="fa-solid fa-microphone-lines"></i>'; recognition.start(); } else { alert("Mic not supported."); }
         }
         
         function toggleVoiceMode() { isVoiceOn = !isVoiceOn; const btn = document.getElementById('voiceBtn'); isVoiceOn ? btn.classList.add('on') : btn.classList.remove('on'); }
@@ -348,7 +294,7 @@
         function loadChat(id) {
             currentChatId = id; const chat = chats.find(c => c.id === id); const wrapper = document.getElementById('chat-wrapper'); wrapper.innerHTML = '';
             if (chat.messages.length === 0) addMessage("Welcome sir. What can I help you with today?", 'alfred', false);
-            else chat.messages.forEach(m => addMessage(m.text, m.sender, false, m.audio, m.file));
+            else chat.messages.forEach(m => addMessage(m.text, m.sender, false, m.audio, m.file, m.chartData));
             closeAllMenus();
         }
 
@@ -356,10 +302,8 @@
             event.stopPropagation();
             if(confirm("Delete this memory bank?")) {
                 chats = chats.filter(c => c.id !== id);
-                if(chats.length === 0) startNewChat();
-                else if(currentChatId === id) loadChat(chats[0].id);
-                saveChats();
-                renderHistory();
+                if(chats.length === 0) startNewChat(); else if(currentChatId === id) loadChat(chats[0].id);
+                saveChats(); renderHistory();
             }
         }
 
@@ -369,34 +313,52 @@
             navigator.clipboard.writeText(code).then(() => { const originalText = btn.innerText; btn.innerText = "Copied!"; setTimeout(() => btn.innerText = originalText, 2000); });
         }
         window.copyText = function(text) { navigator.clipboard.writeText(text).then(() => alert("Copied!")); }
-        
-        // --- POPULATES INPUT ---
-        window.editText = function(text) { 
-            document.getElementById('userInput').value = text; 
-            document.getElementById('userInput').focus(); 
-            updateButtonState(); 
+        window.editText = function(text) { document.getElementById('userInput').value = text; document.getElementById('userInput').focus(); updateButtonState(); }
+
+        // --- NEW: RENDER CHART ---
+        function renderChart(canvasId, chartData) {
+            const ctx = document.getElementById(canvasId).getContext('2d');
+            const accentColor = getComputedStyle(document.body).getPropertyValue('--accent').trim();
+            const textColor = getComputedStyle(document.body).getPropertyValue('--text').trim();
+            
+            new Chart(ctx, {
+                type: chartData.type || 'line',
+                data: {
+                    labels: chartData.labels,
+                    datasets: [{
+                        label: chartData.title,
+                        data: chartData.data,
+                        borderColor: accentColor,
+                        backgroundColor: accentColor + "33", // 20% opacity
+                        borderWidth: 2,
+                        tension: 0.4,
+                        pointRadius: 3,
+                        fill: true
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { labels: { color: textColor } } },
+                    scales: {
+                        x: { ticks: { color: textColor }, grid: { color: "#333" } },
+                        y: { ticks: { color: textColor }, grid: { color: "#333" } }
+                    }
+                }
+            });
         }
 
-        function addMessage(text, sender, save = true, audioData = null, fileData = null) {
+        function addMessage(text, sender, save = true, audioData = null, fileData = null, chartData = null) {
             const wrapper = document.getElementById('chat-wrapper'); const div = document.createElement('div'); div.className = `message ${sender}`;
             div.innerHTML = marked.parse(text);
-            
             div.querySelectorAll('pre code').forEach((block) => hljs.highlightElement(block));
             div.querySelectorAll('pre').forEach((block) => {
                 const btn = document.createElement('button'); btn.className = 'copy-btn'; btn.innerText = 'Copy'; btn.onclick = function() { window.copyCode(this); }; block.appendChild(btn);
             });
-            
-            // --- UPDATED ACTIONS: COPY ON ALL, EDIT ON USER ---
             const actionsDiv = document.createElement('div'); actionsDiv.className = 'msg-actions';
-            
             let html = `<div class="action-mini-btn" title="Copy" onclick="copyText(this.parentElement.parentElement.innerText)"><i class="fa-regular fa-copy"></i></div>`;
-            
-            if (sender === 'user') {
-                html += `<div class="action-mini-btn" title="Edit" onclick="editText(this.parentElement.parentElement.innerText)"><i class="fa-solid fa-pencil"></i></div>`;
-            }
-            
-            actionsDiv.innerHTML = html;
-            div.appendChild(actionsDiv);
+            if (sender === 'user') html += `<div class="action-mini-btn" title="Edit" onclick="editText(this.parentElement.parentElement.innerText)"><i class="fa-solid fa-pencil"></i></div>`;
+            actionsDiv.innerHTML = html; div.appendChild(actionsDiv);
 
             if (fileData) {
                 if (fileData.name.match(/\.(jpg|jpeg|png|gif)$/i)) {
@@ -407,10 +369,22 @@
                     fileLink.innerHTML = `<i class="fa-solid fa-file-arrow-down file-icon"></i> <div>${fileData.name}</div>`; div.appendChild(fileLink);
                 }
             }
+            
+            // --- NEW: RENDER CHART ---
+            if (chartData) {
+                const chartId = "chart_" + Date.now();
+                const chartContainer = document.createElement('div');
+                chartContainer.className = "chart-container";
+                chartContainer.innerHTML = `<canvas id="${chartId}"></canvas>`;
+                div.appendChild(chartContainer);
+                setTimeout(() => renderChart(chartId, chartData), 100);
+            }
+
             if (audioData) { const audio = document.createElement('audio'); audio.controls = true; audio.src = "data:audio/mp3;base64," + audioData; div.appendChild(audio); }
             wrapper.appendChild(div); wrapper.scrollTop = wrapper.scrollHeight;
             if (save && currentChatId) {
-                const chat = chats.find(c => c.id === currentChatId); chat.messages.push({ text, sender, audio: audioData, file: fileData });
+                const chat = chats.find(c => c.id === currentChatId); 
+                chat.messages.push({ text, sender, audio: audioData, file: fileData, chartData: chartData });
                 if (sender === 'user' && chat.messages.length <= 2) { chat.title = text.substring(0, 20) + "..."; saveChats(); }
             }
         }
@@ -437,12 +411,7 @@
             if (!text && !currentFileData) return;
 
             playSend();
-            if(text) addMessage(text, 'user'); input.value = ''; 
-            
-            // --- SET PROCESSING STATE ---
-            isProcessing = true; 
-            updateButtonState(); 
-            input.focus();
+            if(text) addMessage(text, 'user'); input.value = ''; isProcessing = true; updateButtonState(); input.focus();
 
             const chat = chats.find(c => c.id === currentChatId); 
             const historyContext = chat.messages.slice(-6).map(m => ({ role: m.sender, content: m.text }));
@@ -452,9 +421,7 @@
             document.getElementById('chat-wrapper').appendChild(loadingDiv);
             document.getElementById('chat-wrapper').scrollTop = document.getElementById('chat-wrapper').scrollHeight;
 
-            // --- ABORT CONTROLLER SETUP ---
-            abortController = new AbortController();
-            const signal = abortController.signal;
+            abortController = new AbortController(); const signal = abortController.signal;
 
             try {
                 const res = await fetch(API_URL, {
@@ -464,29 +431,22 @@
                         command: text, file_data: currentFileData, mime_type: currentMimeType, 
                         speak: isVoiceOn, thinking_mode: isThinkingOn, history: historyContext 
                     }),
-                    signal: signal // Attach signal here
+                    signal: signal
                 });
 
                 if (res.status === 401) { alert("SECURITY ALERT: Access Denied by Server."); }
                 else {
                     const data = await res.json();
                     playReceive();
-                    addMessage(data.response, 'alfred', true, data.audio, data.file);
+                    // Pass chart_data if available
+                    addMessage(data.response, 'alfred', true, data.audio, data.file, data.chart_data);
                     if (data.audio) new Audio("data:audio/mp3;base64," + data.audio).play();
                 }
             } catch (e) {
-                if (e.name === 'AbortError') {
-                    // console.log("Generation stopped by user");
-                } else {
-                    addMessage("Connection Error.", 'alfred', false);
-                }
+                if (e.name !== 'AbortError') addMessage("Connection Error.", 'alfred', false);
             } finally {
-                // CLEANUP
                 if(document.getElementById('loading')) document.getElementById('loading').remove();
-                currentFileData = null; currentMimeType = null;
-                isProcessing = false;
-                abortController = null;
-                updateButtonState();
+                currentFileData = null; currentMimeType = null; isProcessing = false; abortController = null; updateButtonState();
             }
         }
         
