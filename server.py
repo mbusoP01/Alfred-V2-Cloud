@@ -24,7 +24,8 @@ from docx import Document
 from pptx import Presentation
 from pptx.util import Pt as PptxPt, Inches
 from pptx.dml.color import RGBColor as PptxColor
-from pptx.enum.text import PP_ALIGN
+from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
+from pptx.enum.shapes import MSO_SHAPE
 from bs4 import BeautifulSoup
 from youtube_transcript_api import YouTubeTranscriptApi
 from duckduckgo_search import DDGS
@@ -96,20 +97,23 @@ User: Mbuso (Sir). Location: South Africa.
 *** STRICT PROTOCOL ***
 
 1. IF CHART REQUESTED:
-   - Output ONLY JSON data inside these exact tags: <<<CHART_START>>> ... <<<CHART_END>>>
-   - Do NOT use markdown blocks (```json).
+   - Output ONLY JSON data inside tags: <<<CHART_START>>> ... <<<CHART_END>>>.
 
 2. IF FILE REQUESTED (PPT/DOC):
    - Output raw content inside: <<<FILE_START>>> ... <<<FILE_END>>>
-   - For PPT, use "Slide X:" headers.
-   - Do NOT include labels like "Content:" or "Body:" inside the slides. Just give the bullet points.
+   - For PPT, format EXACTLY like this:
+     Title: The Presentation Title
+     Slide 1: Slide Title Here
+     - Bullet point one
+     - Bullet point two
+     Slide 2: Next Slide Title
+     - Info here
 
 3. IF IMAGE REQUESTED:
    - Reply: "IMAGE_GEN_REQUEST: [Detailed Prompt]"
 
 4. DEFAULT:
-   - Answer using search data if provided.
-   - Save facts: <<<MEM_SAVE>>> fact <<<MEM_END>>>.
+   - Answer using search data.
 """
 
 api_key = os.environ.get("GEMINI_API_KEY")
@@ -163,7 +167,7 @@ async def generate_voice_dual(text):
     if not clean.strip(): return None
     if ELEVENLABS_API_KEY:
         try:
-            url = f"[https://api.elevenlabs.io/v1/text-to-speech/](https://api.elevenlabs.io/v1/text-to-speech/){BRIAN_VOICE_ID}"
+            url = f"https://api.elevenlabs.io/v1/text-to-speech/{BRIAN_VOICE_ID}"
             headers = {"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"}
             res = requests.post(url, json={"text": clean[:1000], "model_id": "eleven_monolingual_v1"}, headers=headers)
             if res.status_code == 200: return base64.b64encode(res.content).decode('utf-8')
@@ -180,7 +184,7 @@ async def generate_voice_dual(text):
 def generate_image(prompt):
     if not HUGGINGFACE_API_KEY: return None, None
     headers = {"Authorization": f"Bearer {HUGGINGFACE_API_KEY}"}
-    models = ["[https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0](https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0)"]
+    models = ["https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0"]
     for m in models:
         try:
             r = requests.post(m, headers=headers, json={"inputs": prompt}, timeout=10)
@@ -188,39 +192,37 @@ def generate_image(prompt):
         except: continue
     return None, None
 
-# --- DESIGNER (THEME ENGINE) ---
-def apply_dark_theme(slide, title_text):
-    # 1. Background (Dark Hex: #111111)
-    background = slide.background
-    fill = background.fill
+# --- NEW DESIGNER ENGINE (THE "NEON GLASS" THEME) ---
+def apply_neon_theme(slide, is_title_slide=False):
+    # 1. Main Background (Deep Space Blue)
+    bg = slide.background
+    fill = bg.fill
     fill.solid()
-    fill.fore_color.rgb = PptxColor(17, 17, 17)
+    fill.fore_color.rgb = PptxColor(5, 5, 16) # #050510
     
-    # 2. Add a Subtle Design Element (Blue Bar on Left)
-    left = Inches(0)
-    top = Inches(0)
-    width = Inches(0.2)
-    height = Inches(7.5)
-    shape = slide.shapes.add_shape(1, left, top, width, height) # 1 = Rectangle
-    shape.fill.solid()
-    shape.fill.fore_color.rgb = PptxColor(10, 132, 255) # Alfred Blue
-    shape.line.fill.background() # No border
+    # 2. Top "Cyber" Bar (Cyan Glow)
+    top_bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0), Inches(0), Inches(10), Inches(0.15))
+    top_bar.fill.solid()
+    top_bar.fill.fore_color.rgb = PptxColor(0, 243, 255) # Neon Cyan
+    top_bar.line.fill.background()
 
-    # 3. Title Styling
-    try:
-        title = slide.shapes.title
-        title.text = title_text
-        title.top = Inches(0.5)
-        title.left = Inches(0.5)
-        title.width = Inches(9)
-        
-        for paragraph in title.text_frame.paragraphs:
-            paragraph.font.name = "Arial"
-            paragraph.font.size = PptxPt(40)
-            paragraph.font.bold = True
-            paragraph.font.color.rgb = PptxColor(255, 255, 255) # White
-            paragraph.alignment = PP_ALIGN.LEFT
-    except: pass
+    # 3. Bottom "Retro" Bar (Purple Glow)
+    btm_bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0), Inches(7.35), Inches(10), Inches(0.15))
+    btm_bar.fill.solid()
+    btm_bar.fill.fore_color.rgb = PptxColor(188, 19, 254) # Neon Purple
+    btm_bar.line.fill.background()
+
+    # 4. The "Glass Card" Container (Background for Text)
+    # We draw a rounded rectangle in the middle to hold content
+    if is_title_slide:
+        card = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(1), Inches(2), Inches(8), Inches(3.5))
+    else:
+        card = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.5), Inches(1.2), Inches(9), Inches(5.5))
+    
+    card.fill.solid()
+    card.fill.fore_color.rgb = PptxColor(30, 30, 46) # Dark Grey/Blue
+    # No transparency support in python-pptx simple fill, so we stick to solid sleek grey
+    card.line.color.rgb = PptxColor(60, 60, 80) # Subtle border
 
 def create_file(content, ftype):
     try:
@@ -229,61 +231,75 @@ def create_file(content, ftype):
         
         if ftype == "pdf":
             p = FPDF(); p.add_page(); p.set_font("Arial", size=12)
-            p.set_font("Arial", 'B', 16); p.cell(0, 10, "Alfred Report", 0, 1, 'C'); p.ln(10)
-            p.set_font("Arial", size=12)
-            safe_content = content.encode('latin-1', 'replace').decode('latin-1')
-            p.multi_cell(0, 10, safe_content)
+            p.multi_cell(0, 10, content.encode('latin-1', 'replace').decode('latin-1'))
             return base64.b64encode(p.output(dest='S').encode('latin-1')).decode('utf-8'), f"{fname}.pdf"
         
         elif ftype == "docx":
-            d = Document()
-            d.add_heading('Alfred Report', 0).alignment = 1
-            d.add_paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d')}")
-            d.add_paragraph(content)
-            d.save(buf)
+            d = Document(); d.add_paragraph(content); d.save(buf)
             return base64.b64encode(buf.getvalue()).decode('utf-8'), f"{fname}.docx"
         
         elif ftype == "pptx":
             prs = Presentation()
             slide_chunks = re.split(r'Slide \d+:', content, flags=re.IGNORECASE)
             
-            # Title Slide
+            # --- TITLE SLIDE ---
             title_text = slide_chunks[0].replace("Title:", "").strip()
             if not title_text: title_text = "Alfred Intelligence"
             
-            s1 = prs.slides.add_slide(prs.slide_layouts[6]) # 6 = Blank Layout (Custom Design)
-            apply_dark_theme(s1, title_text)
+            s1 = prs.slides.add_slide(prs.slide_layouts[6]) # Blank
+            apply_neon_theme(s1, is_title_slide=True)
             
-            # Subtitle for Slide 1
-            txBox = s1.shapes.add_textbox(Inches(0.5), Inches(2), Inches(8), Inches(1))
-            tf = txBox.text_frame
-            p = tf.add_paragraph()
-            p.text = f"Generated for Sir\n{datetime.now().strftime('%Y-%m-%d')}"
-            p.font.color.rgb = PptxColor(150, 150, 150)
-            p.font.size = PptxPt(18)
+            # Title Text (Centered on Card)
+            title_box = s1.shapes.add_textbox(Inches(1.2), Inches(2.5), Inches(7.6), Inches(2))
+            title_frame = title_box.text_frame
+            title_frame.word_wrap = True
+            p = title_frame.add_paragraph()
+            p.text = title_text
+            p.font.size = PptxPt(44)
+            p.font.bold = True
+            p.font.color.rgb = PptxColor(255, 255, 255)
+            p.alignment = PP_ALIGN.CENTER
+            
+            # Subtitle
+            sub_box = s1.shapes.add_textbox(Inches(1.2), Inches(4), Inches(7.6), Inches(1))
+            sub_frame = sub_box.text_frame
+            p = sub_frame.add_paragraph()
+            p.text = f"GENERATED BY ALFRED | {datetime.now().strftime('%Y-%m-%d')}"
+            p.font.size = PptxPt(14)
+            p.font.color.rgb = PptxColor(0, 243, 255) # Cyan
+            p.alignment = PP_ALIGN.CENTER
 
-            # Content Slides
+            # --- CONTENT SLIDES ---
             for chunk in slide_chunks[1:]:
                 if not chunk.strip(): continue
                 lines = chunk.strip().split('\n')
                 header = lines[0].strip()
                 body_lines = [line.strip() for line in lines[1:] if line.strip() and not line.lower().startswith(("content:", "body:"))]
                 
-                slide = prs.slides.add_slide(prs.slide_layouts[6]) # Blank Layout
-                apply_dark_theme(slide, header)
+                slide = prs.slides.add_slide(prs.slide_layouts[6]) # Blank
+                apply_neon_theme(slide, is_title_slide=False)
                 
-                # Custom Text Box for Body
-                txBox = slide.shapes.add_textbox(Inches(0.5), Inches(1.5), Inches(9), Inches(5))
-                tf = txBox.text_frame
-                tf.word_wrap = True
+                # Slide Title (Top Left)
+                t_box = slide.shapes.add_textbox(Inches(0.8), Inches(0.4), Inches(8.4), Inches(0.8))
+                tf = t_box.text_frame
+                p = tf.add_paragraph()
+                p.text = header
+                p.font.size = PptxPt(32)
+                p.font.bold = True
+                p.font.color.rgb = PptxColor(255, 255, 255)
+                
+                # Slide Body (Inside the Card)
+                b_box = slide.shapes.add_textbox(Inches(1), Inches(1.5), Inches(8), Inches(5))
+                bf = b_box.text_frame
+                bf.word_wrap = True
                 
                 for line in body_lines:
-                    p = tf.add_paragraph()
-                    clean_line = line[1:].strip() if line.startswith("-") or line.startswith("*") else line
-                    p.text = "• " + clean_line # Custom Bullet
-                    p.font.color.rgb = PptxColor(200, 200, 200) # Light Grey
-                    p.font.size = PptxPt(22) # Large Text
-                    p.space_after = PptxPt(10) # Spacing
+                    p = bf.add_paragraph()
+                    clean = line.lstrip("-*• ").strip()
+                    p.text = f"•  {clean}"
+                    p.font.size = PptxPt(20)
+                    p.font.color.rgb = PptxColor(220, 220, 220)
+                    p.space_after = PptxPt(14) # Breathing room
 
             prs.save(buf)
             return base64.b64encode(buf.getvalue()).decode('utf-8'), f"{fname}.pptx"
@@ -291,7 +307,9 @@ def create_file(content, ftype):
         elif ftype == "txt":
             return base64.b64encode(content.encode('utf-8')).decode('utf-8'), f"{fname}.txt"
             
-    except: return None, None
+    except Exception as e:
+        print(f"Error: {e}")
+        return None, None
 
 @app.post("/command")
 async def process_command(request: UserRequest, x_alfred_auth: Optional[str] = Header(None)):
