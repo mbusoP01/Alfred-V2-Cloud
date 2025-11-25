@@ -91,7 +91,7 @@ pull_memory_from_cloud()
 def get_system_instructions():
     return f"""
 You are Alfred, an elite intelligent assistant & Senior Full-Stack Engineer.
-User: Mbuso (Sir).
+User: Mbuso (Sir). Location: South Africa.
 
 *** MEMORY ***
 {load_memory()}
@@ -222,7 +222,7 @@ def create_file(content, ftype):
             return base64.b64encode(content.encode('utf-8')).decode('utf-8'), f"{fname}.txt"
     except: return None, None
 
-# --- STREAMING GENERATOR (WITH FALLBACK) ---
+# --- STREAMING GENERATOR ---
 async def stream_response_generator(request_data):
     try:
         sa_time = datetime.now(pytz.timezone('Africa/Johannesburg')).strftime("%H:%M")
@@ -242,11 +242,11 @@ async def stream_response_generator(request_data):
                 try: parts.append(types.Part.from_bytes(data=base64.b64decode(f.data), mime_type=f.mime_type))
                 except: pass
 
-        # --- MODEL CASCADE (THINKING -> TURBO) ---
+        # --- MODEL CASCADE ---
         full_response_text = ""
         
         try:
-            # Try Thinking Model (Ferrari)
+            # 1. Try Thinking Model (The Ferrari)
             chat = client.chats.create(model='gemini-2.0-flash-thinking-exp-01-21', history=hist, config=types.GenerateContentConfig(system_instruction=get_system_instructions(), tools=[types.Tool(google_search=types.GoogleSearch())]))
             for chunk in chat.send_message_stream(parts):
                 if chunk.text:
@@ -254,17 +254,19 @@ async def stream_response_generator(request_data):
                     yield json.dumps({"type": "text", "content": chunk.text}) + "\n"
                     await asyncio.sleep(0.01)
         except Exception as e:
-            # If 429 or crash, Switch to Standard Flash (Honda Civic - Reliable)
-            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-                yield json.dumps({"type": "text", "content": "\n[Thinking Model Exhausted. Switching to Turbo...]\n"}) + "\n"
-                chat = client.chats.create(model='gemini-1.5-flash', history=hist, config=types.GenerateContentConfig(system_instruction=get_system_instructions(), tools=[types.Tool(google_search=types.GoogleSearch())]))
+            # 2. If 429 (Busy) or 404 (Not Found), Switch to 2.0 Flash (The Reliable Sedan)
+            error_str = str(e)
+            if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str or "404" in error_str:
+                yield json.dumps({"type": "text", "content": "\n[Thinking Model Busy. Switching to 2.0 Flash...]\n"}) + "\n"
+                # Switched to gemini-2.0-flash
+                chat = client.chats.create(model='gemini-2.0-flash', history=hist, config=types.GenerateContentConfig(system_instruction=get_system_instructions(), tools=[types.Tool(google_search=types.GoogleSearch())]))
                 for chunk in chat.send_message_stream(parts):
                     if chunk.text:
                         full_response_text += chunk.text
                         yield json.dumps({"type": "text", "content": chunk.text}) + "\n"
                         await asyncio.sleep(0.01)
             else:
-                raise e # Real error
+                raise e
 
         # Post-Processing
         final_payload = {"type": "meta", "audio": None, "file": None, "chart": None}
