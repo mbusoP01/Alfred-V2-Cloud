@@ -471,7 +471,12 @@
                         } catch (e) { console.log("Stream Parse Error", e); }
                     }
                 }
-            } catch (e) { if (e.name !== 'AbortError') loadingDiv.innerText = "Connection Error."; } 
+            } catch (e) {
+                if (e.name !== 'AbortError') {
+                    console.error(e);
+                    if (!fullText) loadingDiv.innerText = "Connection Error.";
+                }
+            } 
             finally { loadingDiv.id = ''; currentFiles = []; isProcessing = false; abortController = null; updateButtonState(); }
         }
         
